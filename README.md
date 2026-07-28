@@ -4,7 +4,7 @@
 
 **Same brief, same tools, same harness. Build a 3D game someone would actually want to keep playing.**
 
-[![License](https://img.shields.io/badge/license-MIT-0f0f0f?style=flat-square)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-0f0f0f?style=flat-square)](package.json) [![Model registry](https://img.shields.io/badge/model%20registry-15-0f0f0f?style=flat-square)](models.json) [![Playable builds](https://img.shields.io/badge/playable%20builds-27-7c3aed?style=flat-square)](https://sandscape.app/worldbuild/rounds/ai-game-benchmark-2026-07-13) [![Leaderboard](https://img.shields.io/badge/live%20leaderboard-sandscape.app-7c3aed?style=flat-square)](https://sandscape.app/worldbuild)
+[![License](https://img.shields.io/badge/license-MIT-0f0f0f?style=flat-square)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-0f0f0f?style=flat-square)](package.json) [![Model registry](https://img.shields.io/badge/model%20registry-16-0f0f0f?style=flat-square)](models.json) [![Playable builds](https://img.shields.io/badge/playable%20builds-29-7c3aed?style=flat-square)](https://sandscape.app/worldbuild/rounds/ai-game-benchmark-2026-07-13) [![Leaderboard](https://img.shields.io/badge/live%20leaderboard-sandscape.app-7c3aed?style=flat-square)](https://sandscape.app/worldbuild)
 
 <img src="docs/assets/racing-compare.webp" alt="Three AI-built racing games running side by side: Grok 4.5, GPT-5.6 Sol, and Claude Fable 5, each from the same Sunset Apex brief" width="100%">
 
@@ -39,11 +39,11 @@ Each brief is a short GDD (~30 lines) that pins the game's name, setting, aesthe
 
 ## The July 2026 pilot round
 
-The first round runs nine models on the same three briefs (arena combat, physics puzzle, racing). That produced **27 browser-playable 3D games**. Every run shipped a build that loads and runs.
+The first round runs ten models on the same three briefs (arena combat, physics puzzle, racing). That produced **29 browser-playable 3D games**. Every run shipped a build that loads and runs.
 [Play them all →](https://sandscape.app/worldbuild/rounds/ai-game-benchmark-2026-07-13)
 
-Claude Fable 5 · Claude Opus 4.8 · Claude Sonnet 5 · GLM-5.2 · GPT-5.5 · GPT-5.6 Sol ·
-GPT-5.6 Terra · Grok 4.5 · Kimi K3
+Claude Fable 5 · Claude Opus 5 · Claude Opus 4.8 · Claude Sonnet 5 · GLM-5.2 · GPT-5.5 ·
+GPT-5.6 Sol · GPT-5.6 Terra · Grok 4.5 · Kimi K3
 
 More open-source models are planned; cost (especially after running Fable) is prohibitive for now. All models ran in high thinking mode through this harness, with the same prompt, the same subagents, and the same basic setup (Three.js, Rapier, Playwright).
 
@@ -62,7 +62,7 @@ Because those qualities are difficult to score automatically, the main evaluatio
 
 How long each model took, what it cost, and how much code it wrote. Published for transparency and not as a quality signal.
 
-Cost varied a lot: Fable averaged ~$252 per game (over half the matrix's ~$1,390 spend), Opus ~$68, Sol ~$36, and GLM / Grok ~$6 each.
+Cost varied a lot: Opus 5 averaged ~$311 per game and Fable ~$252 — between them about 71% of the matrix's ~$2,370 spend. Opus 4.8 ~$68, Sonnet 5 ~$56, Sol ~$36, and GLM / Grok ~$6 each.
 
 <table>
 <tr>
