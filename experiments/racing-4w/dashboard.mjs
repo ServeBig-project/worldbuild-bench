@@ -90,6 +90,26 @@ function pollBatch() {
 }
 setInterval(pollBatch, 5000); pollBatch();
 
+// ---- game source version: newest mtime of the workspace's own source files (live reload) ----
+const SRC_EXT = new Set([".html", ".js", ".mjs", ".css", ".json"]);
+const SKIP_DIRS = new Set(["lib", "skills", "node_modules", ".git"]);
+function gameVersion(dir) {
+  if (!dir) return { version: null, recent: [] };
+  const base = path.join(dir, "workspace"); const files = [];
+  const walk = (d) => {
+    let ents = []; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(p); }
+      else if (SRC_EXT.has(path.extname(e.name))) { try { const st = fs.statSync(p); files.push({ f: path.relative(base, p), m: st.mtimeMs, s: st.size }); } catch { /* raced */ } }
+    }
+  };
+  walk(base);
+  files.sort((a, b) => b.m - a.m);
+  const version = files.length ? `${files[0].m}:${files.length}:${files.reduce((t, x) => t + x.s, 0)}` : null;
+  return { version, recent: files.slice(0, 5).map((x) => ({ file: x.f, mtime: x.m })) };
+}
+
 // ---- server ----
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".glb": "model/gltf-binary", ".wasm": "application/wasm" };
 http.createServer((req, res) => {
@@ -98,7 +118,7 @@ http.createServer((req, res) => {
   if (url.pathname === "/api/state") {
     const s = summarize(readTranscript(dir));
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-    return res.end(JSON.stringify({ run: dir ? path.basename(dir) : null, now: Date.now(), ...s, batch }));
+    return res.end(JSON.stringify({ run: dir ? path.basename(dir) : null, now: Date.now(), ...s, batch, game: gameVersion(dir) }));
   }
   if (url.pathname.startsWith("/game/")) {
     if (!dir) { res.writeHead(404); return res.end("no run yet"); }
@@ -138,7 +158,8 @@ button{background:#2a2f3b;color:var(--ink);border:1px solid var(--line);border-r
 </style></head><body>
 <header><h1>Sunset Apex <span>· live build</span></h1><span class="pill" id="phase">…</span><span class="meta" id="meta"></span></header>
 <main>
-<section class="panel"><h2>Game in progress <button id="reload">reload preview</button></h2><iframe id="game" src="/game/index.html"></iframe>
+<section class="panel"><h2>Game in progress <button id="reload">reload preview</button> <select id="mode" style="background:#2a2f3b;color:#e7e9ee;border:1px solid #262b36;border-radius:6px;padding:3px 6px"><option value="change" selected>auto-reload: on code change</option><option value="10s">auto-reload: every 10 s</option><option value="off">auto-reload: off</option></select></h2><iframe id="game" src="/game/index.html"></iframe>
+<div class="small" id="changes">no source changes yet</div>
 <div class="panel" style="margin-top:12px"><h2>Agents (root + 4 parallel builders)</h2><div class="cards" id="cards"></div></div></section>
 <section>
 <div class="panel"><h2>Serving · FreeToken on one RTX 4090</h2>
@@ -149,7 +170,17 @@ button{background:#2a2f3b;color:var(--ink);border:1px solid var(--line);border-r
 <script>
 const $=id=>document.getElementById(id);const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmtT=s=>{s=Math.max(0,Math.round(s));return (s>=3600?Math.floor(s/3600)+"h ":"")+Math.floor(s%3600/60)+"m "+(s%60)+"s"};
-$("reload").onclick=()=>{$("game").src="/game/index.html?"+Date.now()};
+const reloadGame=()=>{$("game").src="/game/index.html?"+Date.now()};$("reload").onclick=reloadGame;
+// live reload: when the workspace sources change, wait until they are unchanged for one more poll (about 2 s,
+// so a file written in pieces is not loaded half-written), then reload the preview
+let shownVer=null,seenVer=null;
+function liveReload(g){if(!g||!g.version)return;
+ if(shownVer===null){shownVer=seenVer=g.version;return}
+ if(g.version!==seenVer){seenVer=g.version;return}
+ if(g.version!==shownVer&&$("mode").value==="change"){shownVer=g.version;reloadGame()}}
+setInterval(()=>{if($("mode").value==="10s")reloadGame()},10000);
+function showChanges(g,now){if(!g||!g.recent||!g.recent.length)return;
+ $("changes").textContent="latest edits: "+g.recent.map(r=>r.file+" ("+Math.max(0,Math.round((now-r.mtime)/1000))+"s ago)").join(" · ")}
 function card(a,name){if(!a)return '<div class="card"><b>'+esc(name)+'</b><div class="st">not started</div></div>';
  const cls=a.done?"done":a.status==="generating"?"gen":a.status.startsWith("tool")?"tool":"";
  return '<div class="card"><b>'+esc(name)+'</b> <span class="small">turn '+a.turns+' · '+(a.out/1000).toFixed(1)+'K out</span><div class="st '+cls+'">'+esc(a.done?"finished":a.status)+'</div><div class="small">'+esc(a.tool)+'</div></div>'}
@@ -163,6 +194,7 @@ async function tick(){try{const s=await (await fetch("/api/state",{cache:"no-sto
  const last=(s.batch.series||[]).slice(-1)[0];$("k-batch").textContent=last?last.running:"–";$("k-tps").textContent=last?last.tps.toFixed(0):"–";
  $("k-out").textContent=(s.out/1000).toFixed(1)+"K";$("k-el").textContent=s.t0?fmtT((s.now-s.t0)/1000):"–";
  chart(s.batch.series||[]);$("batchnote").textContent=s.batch.error?("batch log unavailable: "+s.batch.error):"actual requests per decode step (FreeToken log, sampled every 40 steps; red = requests queued)";
+ liveReload(s.game);showChanges(s.game,s.now);
  $("feed").innerHTML=(s.feed||[]).map(f=>'<div><i>'+new Date(f.ts).toLocaleTimeString()+' '+esc(f.agent)+'</i> '+esc(f.text)+'</div>').join("")}
  catch(e){$("phase").textContent="dashboard offline - retrying"}}
 tick();setInterval(tick,2000);
