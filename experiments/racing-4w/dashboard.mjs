@@ -53,12 +53,14 @@ function summarize(events) {
     if (t0 === null && e.type === "request") t0 = ts;
     const a = agents.get(e.agent) ?? { agent: e.agent, depth: e.depth, turns: 0, out: 0, inp: 0, status: "idle", tool: "", last: ts, done: false };
     a.last = ts;
-    if (e.type === "request") { a.turns = e.turn ?? a.turns + 1; a.status = "generating"; a.since = ts; }
+    if (e.type === "request") { a.turns = e.turn ?? a.turns + 1; a.status = "generating"; a.since = ts; a.done = false; }
     if (e.type === "response") {
       a.out += e.outputTokens ?? 0; a.inp += e.inputTokens ?? 0; out += e.outputTokens ?? 0; inp += e.inputTokens ?? 0;
       const calls = e.toolCalls ?? [];
-      a.status = calls.length ? "tools: " + calls.join(", ") : "finished";
-      a.done = calls.length === 0;
+      // a reply cut at max_tokens with no tool call is retried by the harness, so the agent is not finished
+      const cut = e.stopReason === "max_tokens" && calls.length === 0;
+      a.status = calls.length ? "tools: " + calls.join(", ") : cut ? "cut off at the output limit, retrying" : "finished";
+      a.done = calls.length === 0 && !cut;
       if (e.depth === 0 && calls.includes("spawn_agent")) { phase = "parallel build (4 builders)"; spawned += calls.filter((c) => c === "spawn_agent").length; }
       if (e.text && String(e.text).trim()) feed.push({ ts, agent: e.agent, kind: "say", text: String(e.text).trim().slice(0, 240) });
     }
