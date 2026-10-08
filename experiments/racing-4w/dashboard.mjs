@@ -175,7 +175,7 @@ const reloadGame=()=>{$("game").src="/game/index.html?"+Date.now()};$("reload").
 // so a file written in pieces is not loaded half-written), then reload the preview
 let shownVer=null,seenVer=null;
 function liveReload(g){if(!g||!g.version)return;
- if(shownVer===null){shownVer=seenVer=g.version;return}
+ if(shownVer===null){shownVer=seenVer=g.version;reloadGame();return}   // the preview was opened before the run existed
  if(g.version!==seenVer){seenVer=g.version;return}
  if(g.version!==shownVer&&$("mode").value==="change"){shownVer=g.version;reloadGame()}}
 setInterval(()=>{if($("mode").value==="10s")reloadGame()},10000);
@@ -193,7 +193,7 @@ async function tick(){try{const s=await (await fetch("/api/state",{cache:"no-sto
  const b=s.builders||[];$("cards").innerHTML=card(s.root,"root · orchestrator")+[0,1,2,3].map(i=>card(b[i],"builder "+(i+1))).join("");
  const last=(s.batch.series||[]).slice(-1)[0];$("k-batch").textContent=last?last.running:"–";$("k-tps").textContent=last?last.tps.toFixed(0):"–";
  $("k-out").textContent=(s.out/1000).toFixed(1)+"K";$("k-el").textContent=s.t0?fmtT((s.now-s.t0)/1000):"–";
- chart(s.batch.series||[]);$("batchnote").textContent=s.batch.error?("batch log unavailable: "+s.batch.error):"actual requests per decode step (FreeToken log, sampled every 40 steps; red = requests queued)";
+ chart((s.batch.series||[]).filter(p=>!s.t0||p.t>=s.t0-2000));   // only this run, not the preflight before it$("batchnote").textContent=s.batch.error?("batch log unavailable: "+s.batch.error):"actual requests per decode step (FreeToken log, sampled every 40 steps; red = requests queued)";
  liveReload(s.game);showChanges(s.game,s.now);
  $("feed").innerHTML=(s.feed||[]).map(f=>'<div><i>'+new Date(f.ts).toLocaleTimeString()+' '+esc(f.agent)+'</i> '+esc(f.text)+'</div>').join("")}
  catch(e){$("phase").textContent="dashboard offline - retrying"}}
