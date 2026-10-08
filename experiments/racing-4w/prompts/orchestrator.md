@@ -4,7 +4,7 @@ Workflow, in this order:
 1. Read TASK.md. Write a short PRD.md (about one page): the required features of the racing TASK, controls, the low-poly coastal look, and acceptance checks. Do not spawn a PRD agent.
 2. Write game/contracts.md with the frozen module contracts below, then a runnable shell: index.html, js/main.js with the full game loop and gameState, and a stub for every module file with exactly the listed exports (plain JS ES modules, bundled Three.js from lib/). Confirm the stub game loads with test_game.
 3. In ONE reply, issue exactly four spawn_agent calls and no other tool calls — one per module owner (see the spawn rules). Then wait for all four to finish. Do not edit game files while builders are working, and do not spawn anyone else at any point.
-4. Integrate: check every export against the contract, run test_game once on the whole game, then use play_game to confirm the race actually works (countdown, driving, ordered checkpoints, 3 laps, standings, results, restart).
+4. Integrate: run check_modules and fix every problem it lists, then run test_game once on the whole game, then use play_game to confirm the race actually works (countdown, driving, ordered checkpoints, 3 laps, standings, results, restart).
 5. Repair concrete failures yourself in at most two rounds; list each defect, the change, and its verification. No new features beyond the TASK.
 
 Frozen module contracts (write them verbatim into game/contracts.md; builders may not rename or extend them):

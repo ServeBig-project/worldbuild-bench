@@ -116,6 +116,10 @@ function gameVersion(dir) {
   return { version, recent: files.slice(0, 5).map((x) => ({ file: x.f, mtime: x.m })) };
 }
 
+function readLive(dir) {
+  try { return JSON.parse(fs.readFileSync(path.join(dir, "live.json"), "utf8")); } catch { return {}; }
+}
+
 // ---- server ----
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".glb": "model/gltf-binary", ".wasm": "application/wasm" };
 http.createServer((req, res) => {
@@ -123,6 +127,8 @@ http.createServer((req, res) => {
   const dir = runDir();
   if (url.pathname === "/api/state") {
     const s = summarize(readTranscript(dir));
+    const live = readLive(dir);   // harness-v2 streams: per-agent progress of the call in flight
+    for (const a of [s.root, ...s.builders]) if (a && a.status === "generating" && live[a.agent]) a.live = live[a.agent];
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     return res.end(JSON.stringify({ run: dir ? path.basename(dir) : null, now: Date.now(), ...s, batch, game: gameVersion(dir) }));
   }
@@ -187,9 +193,13 @@ function liveReload(g){if(!g||!g.version)return;
 setInterval(()=>{if($("mode").value==="10s")reloadGame()},10000);
 function showChanges(g,now){if(!g||!g.recent||!g.recent.length)return;
  $("changes").textContent="latest edits: "+g.recent.map(r=>r.file+" ("+Math.max(0,Math.round((now-r.mtime)/1000))+"s ago)").join(" · ")}
+function genLabel(a,now){const t=fmtT((now-a.since)/1000),l=a.live;if(!l)return "generating · "+t;
+ if(l.firstTokenMs===null)return "queued in the engine · "+t;
+ const what=l.toolArgChars>0?"writing tool call":l.contentChars>0?"answering":"thinking";
+ return what+" · ~"+(l.chunks/1000).toFixed(1)+"K tok · "+t}
 function card(a,name,now){if(!a)return '<div class="card"><b>'+esc(name)+'</b><div class="st">not started</div></div>';
  const cls=a.failed?"fail":a.done?"done":a.status==="generating"?"gen":a.status.startsWith("tool")?"tool":"";
- const st=a.failed?a.status:a.done?"finished":a.status==="generating"&&a.since?"generating · "+fmtT((now-a.since)/1000):a.status;   // a long single call is normal, not a hang
+ const st=a.failed?a.status:a.done?"finished":a.status==="generating"&&a.since?genLabel(a,now):a.status;   // a long single call is normal, not a hang
  return '<div class="card"><b>'+esc(name)+'</b> <span class="small">turn '+a.turns+' · '+(a.out/1000).toFixed(1)+'K out</span><div class="st '+cls+'">'+esc(st)+'</div><div class="small">'+esc(a.tool)+'</div></div>'}
 function chart(series){const c=$("chart"),x=c.getContext("2d"),W=c.width,H=c.height;x.clearRect(0,0,W,H);
  x.strokeStyle="#262b36";for(let i=1;i<=4;i++){const y=H-i*H/5;x.beginPath();x.moveTo(0,y);x.lineTo(W,y);x.stroke();x.fillStyle="#8b93a7";x.fillText(String(i),2,y-2)}
