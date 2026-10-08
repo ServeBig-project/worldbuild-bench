@@ -7,7 +7,9 @@ import {
   ToolResultBlock,
   ToolUseBlock,
   fetchJson,
+  fetchStream,
 } from "./types.js";
+import { ChatStreamAccumulator } from "./sse.js";
 
 /**
  * Direct api.openai.com uses Responses (reasoning models reject tools on
@@ -244,14 +246,32 @@ export class OpenAIProvider implements Provider {
       headers["x-title"] = "WorldBuild Bench";
     }
 
-    const json = await fetchJson(
-      this.name,
-      `${this.baseURL.replace(/\/$/, "")}/chat/completions`,
-      headers,
-      body,
-      req.timeoutMs,
-    );
+    const url = `${this.baseURL.replace(/\/$/, "")}/chat/completions`;
+    if (req.stream) {
+      body.stream = true;
+      body.stream_options = { include_usage: true };
+      const acc = new ChatStreamAccumulator();
+      await fetchStream(
+        this.name,
+        url,
+        headers,
+        body,
+        (event) => {
+          acc.push(event);
+          req.onProgress?.(acc.progress());
+        },
+        req.timeoutMs,
+      );
+      const p = acc.progress();
+      return {
+        ...this.parseChatCompletion(acc.toCompletionJson()),
+        timing: { firstTokenMs: p.firstTokenMs ?? p.elapsedMs, totalMs: p.elapsedMs, chunks: p.chunks },
+      };
+    }
+    return this.parseChatCompletion(await fetchJson(this.name, url, headers, body, req.timeoutMs));
+  }
 
+  private parseChatCompletion(json: any): ChatResponse {
     const choice = json.choices?.[0];
     const msg = choice?.message ?? {};
     const content: ContentBlock[] = [];

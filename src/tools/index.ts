@@ -14,6 +14,8 @@ export interface ToolContext {
   spawn?: (task: string) => Promise<string>;
   /** Per-agent task list mutated by the update_tasks tool (each agent's is private). */
   tasks?: TaskStore;
+  /** Absolute paths this agent created or replaced with write_file (each agent's is private). */
+  ownWrites?: Set<string>;
 }
 
 export type TaskStatus = "pending" | "in_progress" | "done";

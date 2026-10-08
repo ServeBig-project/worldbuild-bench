@@ -56,6 +56,8 @@ const ModelEntrySchema = z
       .optional(),
     /** Per-turn output cap (reasoning tokens count on some providers). */
     max_output_tokens: z.number().int().positive().optional(),
+    /** Stream Chat Completions replies (OpenAI-compatible endpoints, e.g. a local engine). */
+    stream: z.boolean().optional(),
   })
   .superRefine((model, ctx) => {
     if (!model.reasoning_effort_map) return;

@@ -1,4 +1,5 @@
 /** Provider-neutral chat types. Adapters normalize wire formats to these. */
+import { StreamProgress, splitSSE } from "./sse.js";
 
 export interface JsonSchema {
   type: string;
@@ -114,6 +115,10 @@ export interface ChatRequest {
   reasoningEffort?: string;
   /** Per-attempt fetch timeout; agent caps this to remaining wall-clock. */
   timeoutMs?: number;
+  /** Stream the reply (Chat Completions path only); set from the model registry. */
+  stream?: boolean;
+  /** Called on every streamed chunk with running totals. */
+  onProgress?: (p: StreamProgress) => void;
 }
 
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
@@ -143,6 +148,8 @@ export interface ChatResponse {
   usage: Usage;
   /** Model id the provider reports it actually served (silent-fallback detection). */
   servedModel?: string;
+  /** Streamed replies only: latency to the first delta, total duration, and delta count. */
+  timing?: { firstTokenMs: number; totalMs: number; chunks: number };
 }
 
 export interface Provider {
@@ -288,6 +295,82 @@ export async function fetchJson(
       continue;
     }
     return json;
+  }
+  throw lastError;
+}
+
+/**
+ * POST and consume an SSE stream, handing each parsed event to `onEvent`.
+ * Rejections before the stream starts follow fetchJson's retry policy; a
+ * failure after it starts is a transport failure and is never replayed.
+ */
+export async function fetchStream(
+  provider: string,
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  onEvent: (json: any) => void,
+  timeoutMs = 600_000,
+  maxAttempts = 5,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "text/event-stream", ...headers },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(Math.max(1, Math.ceil(timeoutMs))),
+      });
+    } catch (e) {
+      throw new ProviderTransportError(provider, e);
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const err = new ProviderHttpError(provider, res.status, text);
+      if (
+        isTerminalHttpError(res.status, res.headers.get("retry-after"), text) ||
+        attempt === maxAttempts
+      )
+        throw err;
+      lastError = err;
+      const wait = retryAfterMs(res.headers.get("retry-after")) ?? backoffMs(attempt);
+      await sleep(Math.min(wait, MAX_RETRY_WAIT_MS));
+      continue;
+    }
+    const handle = (data: string): boolean => {
+      if (data === "[DONE]") return true;
+      let json: any;
+      try {
+        json = JSON.parse(data);
+      } catch {
+        throw new ProviderHttpError(provider, res.status, `invalid stream event: ${data.slice(0, 500)}`);
+      }
+      if (json?.error) throw new ProviderHttpError(provider, 503, data);
+      onEvent(json);
+      return false;
+    };
+    try {
+      if (!res.body) throw new Error("response has no body");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const { events, rest } = splitSSE(buffer);
+        buffer = rest;
+        for (const data of events) if (handle(data)) return;
+      }
+      // A stream that ends without a blank line after its last event.
+      for (const data of splitSSE(buffer + "\n\n").events) if (handle(data)) return;
+    } catch (e) {
+      if (e instanceof ProviderHttpError) throw e;
+      throw new ProviderTransportError(provider, e);
+    }
+    return;
   }
   throw lastError;
 }

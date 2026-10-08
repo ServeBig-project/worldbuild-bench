@@ -19,8 +19,14 @@ const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 
+/** Mirror of in-flight streamed calls for live displays: <run dir>/live.json, rewritten at most once a second. */
+const LIVE_WRITE_INTERVAL_MS = 1_000;
+
 export class Transcript {
   private stream: fs.WriteStream | null = null;
+  private liveFile: string | null = null;
+  private live: Record<string, Record<string, unknown>> = {};
+  private liveWrittenAt = 0;
 
   constructor(
     file: string | null,
@@ -29,6 +35,22 @@ export class Transcript {
     if (file) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       this.stream = fs.createWriteStream(file, { flags: "a" });
+      this.liveFile = path.join(path.dirname(file), "live.json");
+    }
+  }
+
+  /** Record (or clear, with null) an agent's in-flight call progress; never throws. */
+  progress(agent: string, data: Record<string, unknown> | null): void {
+    const { [agent]: _previous, ...others } = this.live;
+    this.live = data ? { ...others, [agent]: { ...data, at: Date.now() } } : others;
+    const now = Date.now();
+    if (!this.liveFile || (data && now - this.liveWrittenAt < LIVE_WRITE_INTERVAL_MS)) return;
+    this.liveWrittenAt = now;
+    try {
+      fs.writeFileSync(`${this.liveFile}.tmp`, JSON.stringify(this.live));
+      fs.renameSync(`${this.liveFile}.tmp`, this.liveFile);
+    } catch {
+      // A live display is best-effort; the run must not fail on it.
     }
   }
 

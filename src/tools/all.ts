@@ -1,6 +1,7 @@
 import { Tool } from "./index.js";
 import { bashTool } from "./bash.js";
 import { editFileTool, listFilesTool, readFileTool, writeFileTool } from "./fs.js";
+import { checkModulesTool } from "./check_modules.js";
 import { spawnAgentTool } from "./spawn_agent.js";
 import { testGameTool } from "./test_game.js";
 import { playGameTool } from "./play_game.js";
@@ -14,6 +15,7 @@ export function defaultTools(): Tool[] {
     writeFileTool,
     editFileTool,
     listFilesTool,
+    checkModulesTool,
     spawnAgentTool,
     testGameTool,
     playGameTool,

@@ -8,6 +8,7 @@ import {
   ToolUseBlock,
 } from "../providers/types.js";
 import { ModelEntry, costOf, nativeReasoningEffortOf } from "../providers/index.js";
+import { StreamProgress } from "../providers/sse.js";
 import { BudgetTracker } from "./budget.js";
 import { Transcript } from "./transcript.js";
 import { buildSystemPrompt, indexSkills } from "./prompts.js";
@@ -126,6 +127,8 @@ export class Agent {
   private ownTurns = 0;
   private directChildren = 0;
   private taskStore: TaskStore = { list: [] };
+  /** Files this agent wrote with write_file — guards against dropping its own earlier parts. */
+  private ownWrites = new Set<string>();
   private stats: AgentStats = {
     turns: 0,
     inputTokens: 0,
@@ -184,6 +187,7 @@ export class Agent {
       transcript: this.opts.transcript,
       spawn: this.canSpawn ? (task) => this.spawnChild(task) : undefined,
       tasks: this.taskStore,
+      ownWrites: this.ownWrites,
     };
   }
 
@@ -344,12 +348,21 @@ export class Agent {
           ...(model.reasoning_effort
             ? { reasoningEffort: nativeReasoningEffortOf(model) }
             : {}),
+          ...(model.stream
+            ? {
+                stream: true,
+                onProgress: (p: StreamProgress) =>
+                  transcript.progress(this.label, { depth: this.depth, turn: this.ownTurns, ...p }),
+              }
+            : {}),
         });
       } catch (e: any) {
         budget.release(reservation);
+        transcript.progress(this.label, null);
         transcript.log("error", this.label, this.depth, { message: e?.message ?? String(e) });
         throw e;
       }
+      transcript.progress(this.label, null);
 
       if (response.servedModel && !this.stats.servedModels.includes(response.servedModel)) {
         this.stats.servedModels.push(response.servedModel);
@@ -387,6 +400,9 @@ export class Agent {
           ? { cacheWriteInputTokens: response.usage.cacheWriteInputTokens }
           : {}),
         outputTokens: response.usage.outputTokens,
+        ...(response.timing
+          ? { firstTokenMs: response.timing.firstTokenMs, genMs: response.timing.totalMs }
+          : {}),
         costUsd: turnCost,
         totalUsd: this.stats.costUsd,
       });
@@ -404,6 +420,8 @@ export class Agent {
           this.stats.budgetExhausted ??= `provider returned ${MAX_EMPTY_REPLIES} consecutive empty replies`;
           break;
         }
+        // Re-sending the identical request tends to reproduce the same reply; say why it was dropped.
+        noteEmptyReply(messages, emptyReplyText(response.stopReason, reservation.maxTokens));
         await sleep(EMPTY_REPLY_BACKOFF_MS * emptyReplies);
         continue;
       }
@@ -599,6 +617,25 @@ export class Agent {
     }
     return blocks;
   }
+}
+
+const EMPTY_REPLY_MARK = "Note: your previous reply was discarded";
+
+function emptyReplyText(stopReason: string, maxTokens: number): string {
+  return stopReason === "max_tokens"
+    ? `${EMPTY_REPLY_MARK}: it reached the per-turn output limit (${maxTokens} tokens) while still reasoning, before any text or tool call. Do not restate your analysis — act now with one concrete tool call. Build large files in parts (write_file, then write_file with append: true).`
+    : `${EMPTY_REPLY_MARK}: it had no text and no tool call. Continue with a concrete tool call, or reply with your summary if you are done.`;
+}
+
+/** Put the note on the trailing user message, replacing an earlier one so retries never stack notes. */
+function noteEmptyReply(messages: ChatMessage[], text: string): void {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user") {
+    messages.push({ role: "user", content: [{ type: "text", text }] });
+    return;
+  }
+  const kept = last.content.filter((b) => !(b.type === "text" && b.text.startsWith(EMPTY_REPLY_MARK)));
+  messages[messages.length - 1] = { ...last, content: [...kept, { type: "text", text }] };
 }
 
 /** One-shot nudge when a reply has no tool calls; a second tool-less reply ends the agent. */

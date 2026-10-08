@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { Tool, ToolContext, truncate } from "./index.js";
+import { Tool, ToolContext, ToolError, truncate } from "./index.js";
 import { resolveInside } from "../util/paths.js";
 
 const READ_CAP = 60_000;
@@ -48,21 +48,35 @@ export const writeFileTool: Tool = {
   def: {
     name: "write_file",
     description:
-      "Write a file in the workspace (creates parent directories, overwrites if it exists). Pass append: true to append to the end of the file instead — use several append calls to build a file too large for a single reply. Path is workspace-relative.",
+      "Write a file in the workspace (creates parent directories, overwrites if it exists). Pass append: true to append to the end of the file instead — use several append calls to build a file too large for a single reply. A file you already wrote in this session is not overwritten unless you pass overwrite: true. Path is workspace-relative.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "Workspace-relative file path" },
         content: { type: "string", description: "Full file content (or the next chunk when append is true)" },
         append: { type: "boolean", description: "Append to the file instead of overwriting (default false)" },
+        overwrite: { type: "boolean", description: "Replace a file you already wrote in this session (default false)" },
       },
       required: ["path", "content"],
     },
   },
-  schema: z.object({ path: z.string().min(1), content: z.string(), append: z.boolean().optional() }),
+  schema: z.object({
+    path: z.string().min(1),
+    content: z.string(),
+    append: z.boolean().optional(),
+    overwrite: z.boolean().optional(),
+  }),
   async execute(input, ctx: ToolContext): Promise<string> {
     const abs = resolveInside(ctx.workspace, input.path);
+    // Building a file in parts and then forgetting append: true silently drops the earlier parts.
+    if (!input.append && !input.overwrite && ctx.ownWrites?.has(abs) && fs.existsSync(abs)) {
+      throw new ToolError(
+        `${input.path} already holds ${fs.statSync(abs).size} bytes you wrote earlier in this session and was left unchanged. ` +
+          `To add to it, call write_file with append: true; to replace it entirely, pass overwrite: true.`,
+      );
+    }
     fs.mkdirSync(path.dirname(abs), { recursive: true });
+    ctx.ownWrites?.add(abs);
     if (input.append) {
       fs.appendFileSync(abs, input.content);
       return `appended ${Buffer.byteLength(input.content)} bytes to ${input.path} (now ${fs.statSync(abs).size} bytes)`;
