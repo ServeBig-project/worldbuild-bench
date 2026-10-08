@@ -289,7 +289,7 @@
         "input_per_mtok": 0,
         "output_per_mtok": 0
       },
-      "max_output_tokens": 8192,
+      "max_output_tokens": 32768,
       "reasoning_effort_map": {
         "medium": "medium"
       },
