@@ -47,13 +47,13 @@ function readTranscript(dir) {
 
 function summarize(events) {
   const agents = new Map(); const feed = [];
-  let phase = "waiting for the first request", t0 = null, out = 0, inp = 0, spawned = 0;
+  let phase = "waiting for the first request", t0 = null, out = 0, inp = 0, spawned = 0, runError = false;
   for (const e of events) {
     const ts = e.ts ? Date.parse(e.ts) || e.ts : null;
     if (t0 === null && e.type === "request") t0 = ts;
     const a = agents.get(e.agent) ?? { agent: e.agent, depth: e.depth, turns: 0, out: 0, inp: 0, status: "idle", tool: "", last: ts, done: false };
     a.last = ts;
-    if (e.type === "request") { a.turns = e.turn ?? a.turns + 1; a.status = "generating"; }
+    if (e.type === "request") { a.turns = e.turn ?? a.turns + 1; a.status = "generating"; a.since = ts; }
     if (e.type === "response") {
       a.out += e.outputTokens ?? 0; a.inp += e.inputTokens ?? 0; out += e.outputTokens ?? 0; inp += e.inputTokens ?? 0;
       const calls = e.toolCalls ?? [];
@@ -65,6 +65,9 @@ function summarize(events) {
     if (e.type === "tool_call") { a.status = "tool: " + e.tool; a.tool = String(e.summary ?? "").slice(0, 120); feed.push({ ts, agent: e.agent, kind: "tool", text: `${e.tool} ${String(e.summary ?? "").slice(0, 160)}` }); }
     if (e.type === "tool_result" && a.status.startsWith("tool")) a.status = "thinking";
     if (e.type === "error" || e.type === "budget" || e.type === "warn") feed.push({ ts, agent: e.agent, kind: e.type, text: String(e.message ?? e.reason ?? JSON.stringify(e)).slice(0, 200) });
+    // a failed call ends that agent for good (the harness does not retry transport failures)
+    if (e.type === "error") { a.status = "failed: " + String(e.message ?? "").slice(0, 90); a.failed = true; a.done = true; }
+    if (e.agent === "runner") { runError ||= e.type === "error"; continue; }
     agents.set(e.agent, a);
   }
   const root = [...agents.values()].find((a) => a.depth === 0);
@@ -72,6 +75,7 @@ function summarize(events) {
   if (spawned && builders.length && builders.every((b) => b.done)) phase = "integration / repair (root)";
   if (root?.done) phase = "finished";
   if (!spawned && root) phase = "planning: PRD, contracts, stubs (root)";
+  if (runError) phase = "run ended with an error";
   return { phase, t0, out, inp, root, builders, feed: feed.slice(-40).reverse() };
 }
 
@@ -149,7 +153,7 @@ main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);gap:16
 iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:8px;background:#000}
 .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .card{border:1px solid var(--line);border-radius:8px;padding:10px;background:#12151b}.card b{font-size:13px}
-.st{font-size:12px;margin-top:4px}.st.gen{color:var(--accent)}.st.done{color:var(--ok)}.st.tool{color:#7cc4ff}
+.st{font-size:12px;margin-top:4px}.st.gen{color:var(--accent)}.st.done{color:var(--ok)}.st.tool{color:#7cc4ff}.st.fail{color:#ff6b6b}
 .small{color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}.kpi{background:#12151b;border-radius:8px;padding:8px}.kpi div{font-size:20px;font-weight:700}.kpi span{color:var(--dim);font-size:11px}
 canvas{width:100%;height:150px}#feed{max-height:330px;overflow:auto;font-size:12px}#feed div{padding:4px 0;border-bottom:1px solid #1f232c}#feed i{color:var(--dim);font-style:normal}
@@ -181,19 +185,21 @@ function liveReload(g){if(!g||!g.version)return;
 setInterval(()=>{if($("mode").value==="10s")reloadGame()},10000);
 function showChanges(g,now){if(!g||!g.recent||!g.recent.length)return;
  $("changes").textContent="latest edits: "+g.recent.map(r=>r.file+" ("+Math.max(0,Math.round((now-r.mtime)/1000))+"s ago)").join(" · ")}
-function card(a,name){if(!a)return '<div class="card"><b>'+esc(name)+'</b><div class="st">not started</div></div>';
- const cls=a.done?"done":a.status==="generating"?"gen":a.status.startsWith("tool")?"tool":"";
- return '<div class="card"><b>'+esc(name)+'</b> <span class="small">turn '+a.turns+' · '+(a.out/1000).toFixed(1)+'K out</span><div class="st '+cls+'">'+esc(a.done?"finished":a.status)+'</div><div class="small">'+esc(a.tool)+'</div></div>'}
+function card(a,name,now){if(!a)return '<div class="card"><b>'+esc(name)+'</b><div class="st">not started</div></div>';
+ const cls=a.failed?"fail":a.done?"done":a.status==="generating"?"gen":a.status.startsWith("tool")?"tool":"";
+ const st=a.failed?a.status:a.done?"finished":a.status==="generating"&&a.since?"generating · "+fmtT((now-a.since)/1000):a.status;   // a long single call is normal, not a hang
+ return '<div class="card"><b>'+esc(name)+'</b> <span class="small">turn '+a.turns+' · '+(a.out/1000).toFixed(1)+'K out</span><div class="st '+cls+'">'+esc(st)+'</div><div class="small">'+esc(a.tool)+'</div></div>'}
 function chart(series){const c=$("chart"),x=c.getContext("2d"),W=c.width,H=c.height;x.clearRect(0,0,W,H);
  x.strokeStyle="#262b36";for(let i=1;i<=4;i++){const y=H-i*H/5;x.beginPath();x.moveTo(0,y);x.lineTo(W,y);x.stroke();x.fillStyle="#8b93a7";x.fillText(String(i),2,y-2)}
  if(!series.length)return;const n=series.length,bw=W/Math.max(n,60);
  series.forEach((p,i)=>{x.fillStyle=p.queue>0?"#ff6b6b":"#ff9f43";const h=p.running*H/5;x.fillRect(i*bw,H-h,Math.max(1,bw-1),h)})}
 async function tick(){try{const s=await (await fetch("/api/state",{cache:"no-store"})).json();
  $("phase").textContent=s.phase;$("meta").textContent=(s.run||"no run yet");
- const b=s.builders||[];$("cards").innerHTML=card(s.root,"root · orchestrator")+[0,1,2,3].map(i=>card(b[i],"builder "+(i+1))).join("");
+ const b=s.builders||[];$("cards").innerHTML=card(s.root,"root · orchestrator",s.now)+[0,1,2,3].map(i=>card(b[i],"builder "+(i+1),s.now)).join("");
  const last=(s.batch.series||[]).slice(-1)[0];$("k-batch").textContent=last?last.running:"–";$("k-tps").textContent=last?last.tps.toFixed(0):"–";
  $("k-out").textContent=(s.out/1000).toFixed(1)+"K";$("k-el").textContent=s.t0?fmtT((s.now-s.t0)/1000):"–";
- chart((s.batch.series||[]).filter(p=>!s.t0||p.t>=s.t0-2000));   // only this run, not the preflight before it$("batchnote").textContent=s.batch.error?("batch log unavailable: "+s.batch.error):"actual requests per decode step (FreeToken log, sampled every 40 steps; red = requests queued)";
+ chart((s.batch.series||[]).filter(p=>!s.t0||p.t>=s.t0-2000));   // only this run, not the preflight before it
+ $("batchnote").textContent=s.batch.error?("batch log unavailable: "+s.batch.error):"actual requests per decode step (FreeToken log, sampled every 40 steps; red = requests queued)";
  liveReload(s.game);showChanges(s.game,s.now);
  $("feed").innerHTML=(s.feed||[]).map(f=>'<div><i>'+new Date(f.ts).toLocaleTimeString()+' '+esc(f.agent)+'</i> '+esc(f.text)+'</div>').join("")}
  catch(e){$("phase").textContent="dashboard offline - retrying"}}

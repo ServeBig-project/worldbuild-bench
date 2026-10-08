@@ -86,7 +86,9 @@ export interface AgentResult {
 
 /** Below this remaining wall budget, no further call is issued. */
 const WALL_GRACE_MS = 5_000;
-const PROVIDER_TIMEOUT_CAP_MS = 600_000;
+/** Per-call ceiling (default 10 min); WB_PROVIDER_TIMEOUT_MINS raises it for slow local engines. */
+const envTimeoutMins = Number(process.env.WB_PROVIDER_TIMEOUT_MINS);
+const PROVIDER_TIMEOUT_CAP_MS = envTimeoutMins > 0 ? envTimeoutMins * 60_000 : 600_000;
 /** Wrap-up calls reserve whatever output still fits (no 512-token floor). */
 const WRAPUP_OUTPUT_FLOOR_TOKENS = 1;
 /** Fallback when the model registry omits max_output_tokens. */
