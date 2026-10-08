@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { Tool, ToolContext } from "./index.js";
 
-export const MAX_SPAWN_DEPTH = 2;
+// racing-4w demo: WB_MAX_SPAWN_DEPTH=1 lets only the root spawn (builders get no spawn tool). Default 2.
+const envDepth = Number(process.env.WB_MAX_SPAWN_DEPTH);
+export const MAX_SPAWN_DEPTH = Number.isInteger(envDepth) && envDepth >= 1 ? envDepth : 2;
 
 /**
  * Delegate a task to a subagent: fresh context, same tools and workspace,

@@ -54,7 +54,9 @@ const fragmentCache = new Map<string, string>();
 function loadFragment(name: string): string {
   const cached = fragmentCache.get(name);
   if (cached !== undefined) return cached;
-  const file = path.join(packageRoot(), "prompts", `${name}.md`);
+  // racing-4w demo: WB_PROMPTS_DIR overrides individual fragments; missing ones fall back to prompts/.
+  const override = process.env.WB_PROMPTS_DIR ? path.join(process.env.WB_PROMPTS_DIR, `${name}.md`) : undefined;
+  const file = override && fs.existsSync(override) ? override : path.join(packageRoot(), "prompts", `${name}.md`);
   const text = fs.readFileSync(file, "utf8").replace(/\n+$/, "");
   fragmentCache.set(name, text);
   return text;
