@@ -98,6 +98,22 @@ reset-to-track).
 
   Tune the constants until the targets are met.
 
+## AI opponents
+
+- **Driving**: the AI drives the same vehicle physics as the player and follows a real racing line, not the
+  centre line: outside, apex, outside. Each AI brakes before corners using look-ahead curvature, defends
+  briefly, and never rams.
+- **Race arc**:
+  - The AI launches hard. For about the first 10 s after GO, its acceleration is about 15% stronger and the
+    pack pulls ahead of the player.
+  - It then settles to about 95-97% of a clean player-lap pace, so a good driver reels the cars in and
+    overtakes them one by one during laps 1-2.
+  - A mild catch-up of up to ±3% speed keeps the pack within a few seconds, so the race stays tense to the
+    finish.
+- **Character**: each AI has its own pace (94-98%) and small line errors, so the cars spread out and do not
+  form a train.
+- **Verify** with the physics test: report each AI's lap time against the autopilot reference lap.
+
 ## Camera
 
 - **Spring and speed**: a chase camera on a critically damped spring. Distance, height and FOV (62° to 76°)

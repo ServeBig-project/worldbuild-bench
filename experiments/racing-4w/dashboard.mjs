@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 // Live, read-only progress page for the racing-4w demo run.
-// Reads runs/<run>/transcript.jsonl (agent events) and FreeToken's "Decode batch" log lines (actual batch size),
+// Reads runs/<run>/transcript.jsonl (agent events) and live.json (calls in flight, the same for every engine),
 // and serves the run's workspace so the game in progress can be played in an iframe.
-// usage: node experiments/racing-4w/dashboard.mjs [--run <runDir>|latest] [--port 8090] [--container wb-freetoken]
+// usage: node experiments/racing-4w/dashboard.mjs [--run <runDir>|latest] [--port 8090] [--engine Strata]
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const PORT = Number(arg("--port", 8090));
-const CONTAINER = arg("--container", "wb-freetoken");
+const ENGINE = arg("--engine", "FreeToken");   // label only: the serving view comes from the harness
 const RUN_ARG = arg("--run", "latest");
 
 function runDir() {
@@ -81,20 +80,24 @@ function summarize(events) {
   return { phase, t0, out, inp, root, builders, feed: feed.slice(-40).reverse() };
 }
 
-// ---- FreeToken actual decode batch, from its own log ----
+// ---- serving view from the harness's own live.json, identical for every engine ----
+// running = requests already streaming tokens, queue = sent but no token yet; tok/s is estimated from the
+// streamed text (about 4 characters per token) so engines that send several tokens per chunk compare fairly.
 let batch = { series: [], at: 0, error: null };
-function pollBatch() {
-  execFile("docker", ["logs", "--since", "15m", CONTAINER], { maxBuffer: 64 << 20 }, (err, stdout, stderr) => {
-    if (err) { batch.error = String(err.message).slice(0, 120); return; }
-    const series = [];
-    for (const l of (stdout + stderr).split("\n")) {
-      const m = l.match(/\[(\d{4}-\d\d-\d\d)\|(\d\d:\d\d:\d\d)\|core.*Decode batch, #running-req: (\d+).*?token usage: ([\d.]+).*?gen throughput \(token\/s\): ([\d.]+), #queue-req: (\d+)/);
-      if (m) series.push({ t: Date.parse(`${m[1]}T${m[2]}Z`), running: +m[3], usage: +m[4], tps: +m[5], queue: +m[6] });
-    }
-    batch = { series: series.slice(-600), at: Date.now(), error: null };
-  });
+function sampleLive() {
+  const dir = runDir();
+  const live = dir ? readLive(dir) : {};
+  let running = 0, queue = 0, tps = 0;
+  for (const l of Object.values(live)) {
+    if (l.firstTokenMs === null || l.firstTokenMs === undefined) { queue += 1; continue; }
+    running += 1;
+    const genS = Math.max(0.5, (l.elapsedMs - l.firstTokenMs) / 1000);
+    tps += ((l.reasoningChars || 0) + (l.contentChars || 0) + (l.toolArgChars || 0)) / 4 / genS;
+  }
+  const now = Date.now();
+  batch = { series: [...batch.series, { t: now, running, queue, tps }].slice(-4000), at: now, error: null };
 }
-setInterval(pollBatch, 5000); pollBatch();
+setInterval(sampleLive, 5000);
 
 // ---- game source version: newest mtime of the workspace's own source files (live reload) ----
 const SRC_EXT = new Set([".html", ".js", ".mjs", ".css", ".json"]);
@@ -174,9 +177,9 @@ button{background:#2a2f3b;color:var(--ink);border:1px solid var(--line);border-r
 <div class="small" id="changes">no source changes yet</div>
 <div class="panel" style="margin-top:12px"><h2>Agents (root + 4 parallel builders)</h2><div class="cards" id="cards"></div></div></section>
 <section>
-<div class="panel"><h2>Serving · FreeToken on one RTX 4090</h2>
-<div class="kpis"><div class="kpi"><div id="k-batch">–</div><span>decode batch now</span></div><div class="kpi"><div id="k-tps">–</div><span>gen tok/s now</span></div><div class="kpi"><div id="k-out">–</div><span>output tokens</span></div><div class="kpi"><div id="k-el">–</div><span>elapsed</span></div></div>
-<canvas id="chart" width="600" height="150"></canvas><div class="small" id="batchnote">actual requests per decode step (FreeToken log, every 40 steps)</div></div>
+<div class="panel"><h2>Serving · ${ENGINE} on one RTX 4090</h2>
+<div class="kpis"><div class="kpi"><div id="k-batch">–</div><span>requests generating</span></div><div class="kpi"><div id="k-tps">–</div><span>≈ tok/s now</span></div><div class="kpi"><div id="k-out">–</div><span>output tokens</span></div><div class="kpi"><div id="k-el">–</div><span>elapsed</span></div></div>
+<canvas id="chart" width="600" height="150"></canvas><div class="small" id="batchnote">requests generating (red = others waiting for a first token)</div></div>
 <div class="panel" style="margin-top:12px"><h2>Activity</h2><div id="feed"></div></div>
 </section></main>
 <script>
@@ -196,7 +199,7 @@ function showChanges(g,now){if(!g||!g.recent||!g.recent.length)return;
 function genLabel(a,now){const t=fmtT((now-a.since)/1000),l=a.live;if(!l)return "generating · "+t;
  if(l.firstTokenMs===null)return "queued in the engine · "+t;
  const what=l.toolArgChars>0?"writing tool call":l.contentChars>0?"answering":"thinking";
- return what+" · ~"+(l.chunks/1000).toFixed(1)+"K tok · "+t}
+ return what+" · ~"+((l.reasoningChars+l.contentChars+l.toolArgChars)/4000).toFixed(1)+"K tok · "+t}
 function card(a,name,now){if(!a)return '<div class="card"><b>'+esc(name)+'</b><div class="st">not started</div></div>';
  const cls=a.failed?"fail":a.done?"done":a.status==="generating"?"gen":a.status.startsWith("tool")?"tool":"";
  const st=a.failed?a.status:a.done?"finished":a.status==="generating"&&a.since?genLabel(a,now):a.status;   // a long single call is normal, not a hang
@@ -211,7 +214,7 @@ async function tick(){try{const s=await (await fetch("/api/state",{cache:"no-sto
  const last=(s.batch.series||[]).slice(-1)[0];$("k-batch").textContent=last?last.running:"–";$("k-tps").textContent=last?last.tps.toFixed(0):"–";
  $("k-out").textContent=(s.out/1000).toFixed(1)+"K";$("k-el").textContent=s.t0?fmtT((s.now-s.t0)/1000):"–";
  chart((s.batch.series||[]).filter(p=>!s.t0||p.t>=s.t0-2000));   // only this run, not the preflight before it
- $("batchnote").textContent=s.batch.error?("batch log unavailable: "+s.batch.error):"actual requests per decode step (FreeToken log, sampled every 40 steps; red = requests queued)";
+ $("batchnote").textContent="requests generating, every 5 s (red = others waiting for a first token)";
  liveReload(s.game);showChanges(s.game,s.now);
  $("feed").innerHTML=(s.feed||[]).map(f=>'<div><i>'+new Date(f.ts).toLocaleTimeString()+' '+esc(f.agent)+'</i> '+esc(f.text)+'</div>').join("")}
  catch(e){$("phase").textContent="dashboard offline - retrying"}}

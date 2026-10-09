@@ -295,6 +295,25 @@
         "medium": "medium"
       },
       "vision": false
+    },
+    {
+      "id": "qwen38-flash-next-strata",
+      "name": "Qwen3.8-Flash-Next UD-IQ4_XS (local Strata)",
+      "provider": "openai",
+      "provider_model_id": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "base_url_env": "WORLDBUILD_STRATA_BASE_URL",
+      "api_key_env": "WORLDBUILD_FREETOKEN_API_KEY",
+      "pricing": {
+        "input_per_mtok": 0,
+        "output_per_mtok": 0
+      },
+      "max_output_tokens": 32768,
+      "stream": true,
+      "reasoning_effort_map": {
+        "medium": "medium"
+      },
+      "vision": false
     }
   ]
 }

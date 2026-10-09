@@ -1,0 +1,12 @@
+- Spawn exactly once: a single reply containing exactly four spawn_agent calls and nothing else. The owners are TRACK + RACE, WORLD + SKY, VEHICLE and PRESENTATION, with the files listed in the module split.
+- Each brief must contain:
+  - the owner role;
+  - the exact owned files and exports;
+  - the full text of game/contracts.md;
+  - the TASK.md sections it implements, copied verbatim.
+- Tell each builder that it:
+  - may edit only its owned files;
+  - must not run whole-game playtests;
+  - must validate with check_modules after each change (the VEHICLE owner also runs its Node physics test);
+  - should finish naturally when its part fully meets the TASK.
+- Never spawn a PRD, reviewer, tester, polish or replacement agent, and never spawn a second group.
