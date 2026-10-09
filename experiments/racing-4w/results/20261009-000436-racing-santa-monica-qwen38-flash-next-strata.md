@@ -1,4 +1,4 @@
-# Run 20261009-000436: Strata, maxcache config, 5 segments, finished by the root at t+370.8 (playability 65, coherence 100)
+# Run 20261009-000436: Strata, maxcache config, 5 segments, finished by the root at t+370.8 (playability 65, coherence 100; the final build drives)
 
 Santa Monica brief (`racing-santa-monica`), 1 root + 4 builders, Strata `strata:0.1.40-sm89-cgfix` with
 `experiments/racing-sm/strata-wb-maxcache.json`:
@@ -44,13 +44,15 @@ run: 54. In segment 5 the root went from ~80K down to ~40K about every 10-12 min
 | t+43 .. t+102 (60 snapshots) | | no | - | builders mid-rewrite: `buildTrackMeshes` import, syntax errors, duplicate `ferrisFn` |
 | t150 (438287f) | t+150 wall | yes | no | Santa Monica scene: palms, buildings, sunset sky, HUD and standings; the countdown never ends |
 | update-1 (ca95bdb) | 06:10 (t+366) | yes | no | race.js fixed: countdown reaches GO, chase cam at the start arch |
-| final (5547711) | t+370.8 | yes | no | same scene; race clock stays 0:00.0 and W does not move the car (33 s probe) |
+| final (5547711) | t+370.8 | yes | **yes**: the race clock starts ~16 s after load, after the intro and countdown; W reaches 193 km/h by 13 s of race time, AI cars race, standings update | full Santa Monica circuit, 3-lap race vs 3 AI; no click needed; the player car body is not visible from the camera |
 
 **Best before 2.5 h** (`deliverables/run-20261009-000436-best-before-t150.md`): t150 is the most complete, but it
 does not drive; the MVP is the only drivable build.
 
-The root's own `play_game` checks drove full autopilot races, but only through its debug hooks (`__dbgWarp`,
-`__dbgAuto`). A fresh page with keyboard input never starts the race clock.
+**Correction (09:25):** the final build is playable from a fresh page with the keyboard.
+- The earlier "does not drive" calls came from probes that were too short. `probe.mjs` holds W from 7 s to 12 s, and the bench gate checks input within a similar window, but the intro flyby plus countdown take ~16 s.
+- The 33-s long probe at 06:10 ran on the build before the root's last race.js/main.js fixes (06:10-06:11).
+- So `input_response: false` in the gates is a probe-timing artifact for this build.
 
 ## Timelapse
 
