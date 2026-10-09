@@ -57,14 +57,62 @@ reset-to-track).
 ## Required mechanics
 
 - **Vehicle**: accelerate/brake/steer with keyboard; speed-sensitive steering and a
-  chase camera that follows smoothly. Arcade physics are fine — momentum should be felt,
-  but drifting simulation is not required.
+  chase camera that follows smoothly. Momentum must be felt; physics and collisions follow
+  the Physics and collisions section below.
 - **Checkpoints and laps**: ordered checkpoints around the circuit; a lap counts only
   when all checkpoints are passed in order. Show current lap (e.g. "Lap 2/3") and
   race position (e.g. "2nd/3") on the HUD.
 - **AI opponents**: at least 2 cars that follow the track at competitive but beatable
   speeds (waypoint following is fine), with simple collision handling against the player.
 - **Race flow**: a 3-2-1-GO countdown at the start; a race timer on the HUD.
+
+## Physics and collisions
+
+- **Collisions use the bundled Rapier engine.**
+  - Give each car one dynamic rigid body and collider, with continuous collision detection on.
+  - Add static colliders along both track edges (barriers) and for solid props, plus a ground plane.
+  - When a car hits a barrier, it slides along it and loses about 30% of its speed into the wall. It never stops
+    dead, gets stuck, or passes through.
+  - When two cars touch, they push apart without interpenetrating.
+- **Drive and grip come from your own simple tire model**, applied as forces to the rigid body each physics step:
+  - Use a bicycle model with front and rear axles and a lateral grip limit, so the car can understeer and
+    oversteer.
+  - Past the limit the car slides, and counter-steer recovers it.
+  - Rapier's `DynamicRayCastVehicleController` is an optional upgrade once the simple model is stable.
+- **Fixed physics step**: run physics at 120 Hz with an accumulator, independent of the frame rate, and
+  interpolate poses for rendering.
+- **One shared vehicle module drives every car.** The AI produces throttle, brake and steer inputs for the same
+  physics the player uses.
+- **Feel targets and starting values**:
+  - mass 1500 kg, wheelbase 2.9 m;
+  - 0-100 km/h in about 4 s, top speed about 220 km/h, 100-0 km/h braking in about 35 m;
+  - up to about 1.1 g lateral on asphalt;
+  - steering lock 30° at standstill, down to 8° at top speed;
+  - on sand, grip and top speed halve.
+- **Verify with numbers.** Keep the physics step a pure function that also runs in Node, with a test script
+  that reports:
+  - 0-100 km/h time, top speed and braking distance;
+  - steady-state lateral g;
+  - speed and heading after a 30° barrier hit;
+  - an autopilot lap time.
+
+  Tune the constants until the targets are met.
+
+## Camera
+
+- **Spring and speed**: a chase camera on a critically damped spring. Distance, height and FOV (62° to 76°)
+  scale with speed.
+- **Look ahead along the track**: aim at `track.sample(s + d)`, where `d` grows from 8 m at low speed to 30 m at
+  top speed, so corners open up before the car turns in.
+- **Show slides**: follow the velocity direction blended with the heading, so a slide shows its drift angle.
+- **Occlusion**: raycast from the car to the camera. When a building, palm or barrier blocks the view, smoothly
+  pull the camera in or fade the occluder.
+- **Impact feedback**: a short decaying shake on kerbs, barrier hits and car contacts, driven by collision
+  events, with a capped amplitude.
+- **Cinematics**:
+  - During the countdown, run an about 6 s fly-by around the grid that shows the pier's Ferris wheel and the
+    sunset, and ends in the chase position at GO.
+  - After the finish, slowly orbit the player's car behind the results screen.
 
 ## Win / lose
 
