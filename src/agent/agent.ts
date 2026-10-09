@@ -96,6 +96,8 @@ const WRAPUP_OUTPUT_FLOOR_TOKENS = 1;
 const DEFAULT_MAX_TOKENS_PER_TURN = 16_384;
 /** Consecutive empty provider replies tolerated before the agent gives up. */
 const MAX_EMPTY_REPLIES = 4;
+/** Finish-confirmation nudges per agent; after these, a reply without tool calls ends it. */
+const MAX_FINISH_NUDGES = 2;
 const EMPTY_REPLY_BACKOFF_MS = 2_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -256,6 +258,7 @@ export class Agent {
     let finalText = resume?.finalText ?? "";
     let wrappingUp = false;
     let justNudged = false;
+    let finishNudges = 0;
     let emptyReplies = 0;
 
     // A process may have stopped after an assistant emitted tool calls but
@@ -436,8 +439,10 @@ export class Agent {
 
       if (toolUses.length === 0) {
         // One nudge for models that narrate the next action then stop without calling.
-        if (wrappingUp || justNudged) break;
+        // A model that answers each nudge with one more check and then "done" again would loop forever.
+        if (wrappingUp || justNudged || finishNudges >= MAX_FINISH_NUDGES) break;
         justNudged = true;
+        finishNudges += 1;
         transcript.log("warn", this.label, this.depth, {
           message: "reply had no tool calls — sent the finish-confirmation nudge",
         });

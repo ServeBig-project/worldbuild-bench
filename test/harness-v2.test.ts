@@ -253,3 +253,23 @@ test("check_modules: flags syntax errors and missing files, passes a clean tree"
   const good = await runTool(checkModulesTool, {}, ctx(ws));
   assert.match(good.output, /^OK/);
 });
+
+// ---- finish nudges ----------------------------------------------------------
+
+test("agent: at most two finish nudges, then a tool-less reply ends the agent", async () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "wb-v2-"));
+  // Alternates "done" and one more tool call (the loop a builder fell into), then only "done".
+  const provider = new MockProvider((_req, i) =>
+    i % 2 === 1 && i < 10
+      ? { content: [{ type: "tool_use", id: `c${i}`, name: "write_file", input: { path: `f${i}.txt`, content: "x" } }], stopReason: "tool_use", usage: { inputTokens: 10, outputTokens: 5 } }
+      : { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 } },
+  );
+  const agent = new Agent({
+    provider, model: MODEL, tools: [writeFileTool], workspace: ws,
+    budget: new BudgetTracker(), transcript: new Transcript(null, true),
+  });
+  await agent.run("task");
+  const nudges = provider.requests.filter((r) => lastUserTexts(r).some((t) => /no tool calls/.test(t))).length;
+  assert.equal(nudges, 2);
+  assert.equal(provider.requests.length, 5);
+});
