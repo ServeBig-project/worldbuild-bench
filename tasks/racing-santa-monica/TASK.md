@@ -21,6 +21,15 @@ sportback through sweeping coastal bends along Ocean Avenue while the sun sits o
 - **Aesthetic**: detailed stylized, not photoreal. Aim for believable proportions, layered detail and good
   materials, in a warm dusk palette with long shadows. Streetlights and neon accents glow with a subtle bloom.
   The road must read clearly at speed.
+- **Sky and light**:
+  - One sun drives everything. The visible sun, the sky gradient, the directional light that casts the long
+    shadows and the fog/horizon color all share one direction and one warm color. Define the sun once and share it.
+  - Use the bundled atmospheric sky (`three/examples/jsm/objects/Sky.js`) with the sun just above the horizon,
+    and derive an environment map from it so car paint and glass reflect the sunset.
+  - Render the sun as a bright disc with a soft glow (bloom) and a subtle lens flare (`Lensflare`). Draw its
+    textures on a canvas: no image files.
+  - Add a few layers of soft stylized clouds near the horizon (billboards with canvas-drawn textures), backlit
+    by the sun with orange/pink rims and darker undersides, drifting slowly.
 - **Cars**:
   - The player car takes the proportions of a modern German performance sportback, Audi RS7-like:
     - a long sloping fastback roof and wide flared haunches;
