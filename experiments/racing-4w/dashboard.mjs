@@ -68,7 +68,8 @@ function summarize(events) {
     if (e.type === "error" || e.type === "budget" || e.type === "warn") feed.push({ ts, agent: e.agent, kind: e.type, text: String(e.message ?? e.reason ?? JSON.stringify(e)).slice(0, 200) });
     // a failed call ends that agent for good (the harness does not retry transport failures)
     if (e.type === "error") { a.status = "failed: " + String(e.message ?? "").slice(0, 90); a.failed = true; a.done = true; }
-    if (e.agent === "runner") { runError ||= e.type === "error"; continue; }
+    // a resumed run (wb resume) clears the error that ended the previous segment
+    if (e.agent === "runner") { runError = e.type === "resume" ? false : runError || e.type === "error"; continue; }
     agents.set(e.agent, a);
   }
   const root = [...agents.values()].find((a) => a.depth === 0);
