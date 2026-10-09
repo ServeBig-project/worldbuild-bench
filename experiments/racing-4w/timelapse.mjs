@@ -18,7 +18,7 @@ const FPS = Number(process.env.TIMELAPSE_FPS || 2);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const runAlive = () => {
-  try { execFileSync("pgrep", ["-f", "cli.ts run --task racing"]); return true; } catch { return false; }
+  try { execFileSync("pgrep", ["-f", "cli.ts (run --task racing|resume )"]); return true; } catch { return false; }
 };
 
 fs.mkdirSync(outDir, { recursive: true });
