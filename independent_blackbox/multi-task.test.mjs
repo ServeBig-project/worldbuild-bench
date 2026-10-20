@@ -266,6 +266,12 @@ fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(path.join(process.env.WB_FAKE_LOG,task+'.json'),JSON.stringify({
 args,pid:process.pid,dir,prompts:process.env.WB_PROMPTS_DIR,depth:process.env.WB_MAX_SPAWN_DEPTH}));
 if(process.env.WB_FAKE_FAIL_TASK)setTimeout(()=>process.exit(task===process.env.WB_FAKE_FAIL_TASK?17:0),300);
+if(process.env.WB_FAKE_SUCCESS)setTimeout(()=>{
+fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify({
+created_at:new Date().toISOString(),wall_clock_s:.3,
+agent:{tokens_in:10,tokens_out:5,error:null,budget_exhausted:null},gate_error:null}));
+process.exit(0);
+},300);
 setInterval(()=>{},1000);
 `);
   await chmod(executable, 0o755);
@@ -303,4 +309,21 @@ setInterval(()=>{},1000);
   const defaults = JSON.parse(await readFile(join(temp, 'racing.json'), 'utf8'));
   assert.match(await readFile(join(defaults.prompts, 'rules-spawn-orch.md'), 'utf8'),
     /exactly 6 builder subagents/);
+  const successOut = join(temp, 'success');
+  const success = launch('bash', [join(project, 'experiments/multi-task/run.sh'),
+    '--model', 'blackbox/local', '--engine', 'Strata', '--out', successOut, '--budget-mins', '1'],
+  { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WB_FAKE_LOG: temp, WB_FAKE_SUCCESS: '1' } });
+  t.after(() => stop(success));
+  const succeeded = await Promise.race([success.ended,
+    delay(5_000).then(() => { throw new Error('Runner did not finish after both tasks succeeded'); })]);
+  assert.equal(succeeded.code, 0, `Successful tasks must succeed the runner: ${success.output()}`);
+  const outcomes = JSON.parse(await readFile(join(successOut, 'outcomes.json'), 'utf8'));
+  assert.deepEqual(Object.keys(outcomes).sort(), ['arena-combat', 'racing']);
+  for (const task of ['arena-combat', 'racing']) {
+    assert.equal(outcomes[task].status, 'finished');
+    assert.equal(outcomes[task].exitCode, 0);
+    assert.equal(outcomes[task].signal, null);
+    assert.equal(outcomes[task].error, null);
+    assert.equal(resolve(outcomes[task].result), join(successOut, task, 'result.json'));
+  }
 });
