@@ -77,16 +77,17 @@ async function runFixture(dir, count) {
   return agents;
 }
 
-async function complete(dir, seconds, inputTokens, outputTokens) {
+async function complete(dir, seconds, inputTokens, outputTokens, resumeCount) {
   await json(join(dir, 'result.json'), {
     created_at: iso(0), wall_clock_s: seconds,
     agent: { tokens_in: inputTokens, tokens_out: outputTokens, error: null, budget_exhausted: null },
     gate_error: null,
+    ...(resumeCount === undefined ? {} : { resumed: { count: resumeCount } }),
   });
 }
 
-function game(build, { broken = false, webgl = false } = {}) {
-  return `<!doctype html><html><head><title>Fixture ${build}</title>
+function game(build, { broken = false, webgl = false, omitHead = false } = {}) {
+  const html = `<!doctype html><html><head><title>Fixture ${build}</title>
 <style>html,body{margin:0;background:#15283b}canvas{display:block;width:100vw;height:100vh}</style></head>
 <body data-build="${build}"><canvas width="320" height="200"></canvas><script>
 const canvas=document.querySelector('canvas');
@@ -105,6 +106,7 @@ getEntities:()=>[{id:'player',position:{x,y:0,z:0}}],
 getObjectiveStatus:()=>({complete:false,progress:0})};
 ${broken ? "setTimeout(()=>{throw new Error('Deliberately broken supported edit')},200);" : ''}
 </script></body></html>`;
+  return omitHead ? html.replace(/<\/?head>/g, '') : html;
 }
 
 test('dashboard isolates four runs, freezes final usage/time, and preserves the playable preview', { timeout: 100_000 }, async t => {
@@ -217,6 +219,8 @@ test('dashboard isolates four runs, freezes final usage/time, and preserves the 
   const gameResponse = await fetch(`${base}/game/${rows[0].id}/index.html`);
   assert.equal(gameResponse.status, 200);
   assert.match(await gameResponse.text(), /data-build="webgl"/);
+  await writeFile(artifact, game('no-head', { webgl: true, omitHead: true }));
+  await until(() => visibleFrame('no-head'), 'Valid rendered HTML without an explicit head must become playable');
 
   await complete(rows[0].dir, 10, 101, 51);
   await complete(rows[1].dir, 20, 202, 102);
@@ -232,6 +236,25 @@ test('dashboard isolates four runs, freezes final usage/time, and preserves the 
   const frozen = await state(engines[0]);
   assert.equal(frozen.aggregate.elapsedMs, final.aggregate.elapsedMs);
   assert.ok(frozen.runs.every(run => run.status === 'finished'));
+  await appendFile(join(rows[0].dir, 'transcript.jsonl'), JSON.stringify({
+    ts: new Date().toISOString(), agent: 'runner', depth: 0, type: 'resume', resumeCount: 1,
+  }) + '\n');
+  const resumed = await until(async () => {
+    const value = await state(engines[0]);
+    return !value.aggregate.completed && value.runs.find(run => run.id === rows[0].id)?.status === 'running' && value;
+  }, 'Resume must supersede the stale terminal result');
+  const resumedArena = resumed.runs.find(run => run.id === rows[0].id);
+  assert.ok(resumedArena.elapsedMs >= 10_000 && resumedArena.elapsedMs < 20_000,
+    'Resumed elapsed time must retain prior work and exclude downtime');
+  await until(async () => (await state(engines[0])).runs.find(run => run.id === rows[0].id).elapsedMs >
+    resumedArena.elapsedMs + 500, 'Resumed task time must advance');
+  await complete(rows[0].dir, 11, 111, 55, 1);
+  const reFinished = await until(async () => {
+    const value = await state(engines[0]);
+    return value.aggregate.completed && value;
+  }, 'Matching resumed result must complete the engine again');
+  assert.equal(reFinished.runs.find(run => run.id === rows[0].id).elapsedMs, 11_000);
+  assert.equal(reFinished.aggregate.elapsedMs, 20_000);
 });
 
 test('legacy single-run invocation serves its public game URL', { timeout: 20_000 }, async t => {
