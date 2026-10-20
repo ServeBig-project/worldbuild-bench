@@ -7,11 +7,12 @@ import time
 import urllib.request
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--br-url", default="http://127.0.0.1:1919/v1")
+parser.add_argument("--br-model", default="flash-next-paper2")
 parser.add_argument("--strata-url", default="http://127.0.0.1:18080/v1")
 parser.add_argument("--engine", choices=("br", "strata", "both"), default="both")
 parser.add_argument("--long-prompts", action="store_true", help="Send two concurrent prompts requiring >=8192 reported input tokens")
 args = parser.parse_args()
-engines = [("BR", args.br_url, "flash-next-paper2"),
+engines = [("BR", args.br_url, args.br_model),
            ("Strata", args.strata_url, "qwen3.8-flash-next-iq2_xs")]
 engines = [engine for engine in engines if args.engine == "both" or engine[0].lower() == args.engine]
 
