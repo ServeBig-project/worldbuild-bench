@@ -1,8 +1,8 @@
 {
   "hardware": "2 × RTX 5090 · one GPU per engine",
   "runs": [
-    {"id":"fp4-fi-arena","engine":"BR NVFP4 FlashInfer","task":"arena-combat","dir":"/opt/worldbuild/runs/fp4-flashinfer/arena-combat"},
-    {"id":"fp4-fi-racing","engine":"BR NVFP4 FlashInfer","task":"racing","dir":"/opt/worldbuild/runs/fp4-flashinfer/racing"},
+    {"id":"nowag-8eb-arena","engine":"BR NoWAG 8eb07829","task":"arena-combat","dir":"/opt/worldbuild/runs/nowag-8eb07829/arena-combat"},
+    {"id":"nowag-8eb-racing","engine":"BR NoWAG 8eb07829","task":"racing","dir":"/opt/worldbuild/runs/nowag-8eb07829/racing"},
     {"id":"strata-arena","engine":"Strata IQ2_XS","task":"arena-combat","dir":"/opt/worldbuild/runs/strata/arena-combat"},
     {"id":"strata-racing","engine":"Strata IQ2_XS","task":"racing","dir":"/opt/worldbuild/runs/strata/racing"}
   ]
