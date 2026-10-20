@@ -9,6 +9,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--br-url", default="http://127.0.0.1:1919/v1")
 parser.add_argument("--strata-url", default="http://127.0.0.1:18080/v1")
 parser.add_argument("--engine", choices=("br", "strata", "both"), default="both")
+parser.add_argument("--long-prompts", action="store_true", help="Send two concurrent prompts requiring >=8192 reported input tokens")
 args = parser.parse_args()
 engines = [("BR", args.br_url, "flash-next-paper2"),
            ("Strata", args.strata_url, "qwen3.8-flash-next-iq2_xs")]
@@ -27,6 +28,10 @@ def probe(engine, base, model, kind):
         payload = {"model": model, "stream": True, "stream_options": {"include_usage": True},
                    "reasoning_effort": "medium", "max_tokens": 512 if kind == "tool" else 128,
                    "messages": [{"role": "user", "content": "Reply with the word ready."}]}
+        if kind.startswith("long-"):
+            payload["messages"][0]["content"] = (
+                "amber birch cedar drift elm frost grove hazel ivory juniper.\n" * 1024
+                + f"\nIndependent request {kind}: acknowledge this neutral word list briefly.")
         if kind == "tool":
             payload["messages"][0]["content"] = "Call report_result with value 7; do not explain."
             payload["tool_choice"] = "auto"
@@ -76,8 +81,11 @@ def probe(engine, base, model, kind):
                     assert call["id"] and call["name"] == "report_result", "Tool identity is not usable"
                     assert json.loads(call["arguments"]) == {"value": 7}, "Tool arguments are not usable"
                 report.update(status="passed", tool_calls=len(calls))
-        else:
+        elif kind == "normal":
             assert text or reasoning, "Normal response contained neither content nor reasoning"
+            report["status"] = "passed"
+        else:
+            assert usage["prompt_tokens"] >= 8192, "Long prompt did not reach 8192 actual input tokens"
             report["status"] = "passed"
     except Exception as error:
         report.update(status="failed", detail=str(error))
@@ -94,7 +102,8 @@ for engine, base, model in engines:
         print(json.dumps({"engine": engine, "status": "failed", "detail": str(error)}), flush=True)
         raise SystemExit(1)
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-    futures = [pool.submit(probe, *engine, kind) for engine in engines for kind in ("normal", "tool")]
+    kinds = ("long-1", "long-2") if args.long_prompts else ("normal", "tool")
+    futures = [pool.submit(probe, *engine, kind) for engine in engines for kind in kinds]
     for future in concurrent.futures.as_completed(futures):
         report = future.result()
         statuses.append(report["status"])
