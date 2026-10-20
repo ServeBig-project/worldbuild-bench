@@ -20,8 +20,12 @@ npx tsx src/cli.ts models
 
 Configure the serving endpoint and select its existing registry id. Paper2 refers
 to your chosen NoWAG weights; this profile does not download weights, invent model
-paths, change caches or start either inference server. Start/configure each engine
-separately. Set `NOWAG_MODEL_ID` and `STRATA_MODEL_ID` to the registry entries that
+paths, change caches or start either inference server. The existing
+`qwen38-flash-next-local` registry entry serves `nvfp4`, not Paper2: do not relabel
+it as Paper2. Configure a dedicated Paper2 registry id and verify the endpoint
+`/v1/models` identity and the recorded served model ids once the instance starts.
+Weight paths and deployment remain to be selected there. Start/configure each
+engine separately. Set `NOWAG_MODEL_ID` and `STRATA_MODEL_ID` to the registry entries that
 actually point at those endpoints, then run each round **sequentially**:
 
 ```bash
@@ -84,6 +88,9 @@ node experiments/racing-4w/dashboard.mjs --runs runs/demo-nowag/manifest.json --
 
 For engine switching, create a combined manifest with the four absolute run
 directories and unique ids, as shown in the [dashboard contract](../racing-4w/dashboard.md).
+Each individual runner uses task names as ids; when combining, prefix them by
+engine (for example `nowag-arena` and `strata-arena`), rather than concatenating
+the two arrays with duplicate ids.
 Future directories can be listed before either round starts. The dashboard keeps
 an existing rendered game visible while a changed candidate fails or loads. It
 shows a preparing message before the first usable rendering, never a fabricated
