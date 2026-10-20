@@ -38,7 +38,7 @@ SMT siblings. They must be revised for a different host.
 |---|---|---|---|
 | BR | 0 | `0-29,128-157` | localhost:1919 |
 | Strata | 1 | `32-61,160-189` | localhost:18080 |
-| BR benchmark | software rendering | `64-67,192-195` | `runs/fp4/` |
+| BR benchmark | software rendering | `64-67,192-195` | `runs/fp4-initialized/` |
 | Strata benchmark | software rendering | `68-71,196-199` | `runs/strata/` |
 | Dashboard | none | `72-73,200-201` | localhost:8090 |
 
@@ -70,9 +70,14 @@ archived configuration. Native NVFP4 passed normal streaming, tool calls and two
 concurrent requests with 16407 input tokens each; both tasks have started. Strata
 finished both tasks successfully and its inference service was stopped at the user's request.
 
-The current native hybrid run uses the documented fixed fetch-cap fallback because
-its NVFP4 bandwidth profile is absent; no calibration or tuning sweep was performed.
-This initialization gap is recorded in [BR #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56).
+The first native run is preserved under `runs/fp4/`. After the user authorized a
+restart, standard initialization with `ft bench bw --gpu 0 --dtype nvfp4 --cpu-threads 30`
+measured concurrent CPU expert bandwidth of 62.3 GB/s and PCIe bandwidth of
+21.6 GB/s on BR's assigned cores. The restarted service reports a hybrid GPU
+fetch fraction of `0.2578953641`; the fresh round writes to `runs/fp4-initialized/`.
+This is one standard initialization, not a parameter sweep or a measured model
+speedup. The missing automatic initialization for explicit hybrid remains tracked
+in [BR #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56).
 
 ## Operate
 
