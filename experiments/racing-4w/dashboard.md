@@ -36,6 +36,8 @@ regardless of task. `/game/index.html` remains available in single-run mode.
   `failed`), human-readable `phase`, `t0`, `finishedAt` (nullable milliseconds),
   `elapsedMs`, `inputTokens`, `outputTokens`, `root`, all `builders` (any depth),
   recent `feed`, `live`, and `game` (`version`, `recent`, `url`).
+- The phase label uses neutral `parallel module work` while builders are active;
+  transcript activity alone does not distinguish coarse work from refinement.
 - Agents include `agent`, `depth`, `turns`, `inp`, `out`, `status`, `done`, `tool`,
   and in-flight `live` data when available. Feed entries have `ts`, `agent`,
   `kind`, `text`. Recent source entries have `file`, `mtime`.

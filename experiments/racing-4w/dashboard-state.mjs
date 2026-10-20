@@ -106,7 +106,7 @@ export function summarizeRun(run, now) {
     running++;
     estimatedTps += ((call.reasoningChars || 0) + (call.contentChars || 0) + (call.toolArgChars || 0)) / 4 / Math.max(0.5, (call.elapsedMs - call.firstTokenMs) / 1000);
   }
-  const phase = status === "waiting" ? "waiting for run" : finishedAt !== null ? status : root?.done ? "scoring" : builders.length ? (builders.every((a) => a.done) ? "integration / repair" : "parallel refinement") : "building playable first version";
+  const phase = status === "waiting" ? "waiting for run" : finishedAt !== null ? status : root?.done ? "scoring" : builders.length ? (builders.every((a) => a.done) ? "integration / repair" : "parallel module work") : "planning / entry wiring";
   return {
     ...run, status, phase, t0, finishedAt, elapsedMs,
     inputTokens, outputTokens, root, builders, feed: feed.slice(-40).reverse(),

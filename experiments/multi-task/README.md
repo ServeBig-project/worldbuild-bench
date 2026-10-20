@@ -1,9 +1,12 @@
 # Two users, progressive game builds
 
 Run `arena-combat` and `racing` concurrently against one configured model endpoint.
-Each task has its own root and defaults to six parallel builders: up to twelve
-builder requests across the two games. Roots first produce usable coarse games,
-then builders refine exclusive modules. Six is a practical starting configuration,
+Each task has its own root orchestrator and two parallel builder phases. Six
+builders per phase is the default: up to twelve concurrent builder requests across
+the two games. Root delegates coarse modules immediately, integrates a rough
+playable game early, then delegates refinement to fresh builders. That is twelve
+builders total per task, twenty-four across both tasks; the two phases of one task
+do not overlap. Six is a practical starting configuration,
 not a benchmark recommendation or measured optimum. More agents can increase
 queueing and integration costs; no speedup or hardware saturation is promised.
 
@@ -37,21 +40,30 @@ bash experiments/multi-task/run.sh --model "$STRATA_MODEL_ID" \
   --engine Strata --out runs/demo-strata --builders 6 --budget-mins 150
 ```
 
-Both tasks within a round start concurrently with identical profile, builder count,
+Both tasks within a round start concurrently with identical profile, builders per phase,
 effort and time backstop. Use the same options for the second engine. `--builders`
 accepts a positive integer; `--effort` accepts low/medium/high/xhigh (default medium).
 Each engine must support its selected effort through its registry configuration.
 Record actual weight quantization, cache/CPU/GPU/MTP settings alongside results;
 the runner cannot infer fairness from a label. Keep other workload settings equal.
 
-The root makes its short plan and functioning imports before delegation. It checks
-rendering with `test_game` and interaction with `play_game`; a black shell does not
-qualify. Builders preserve frozen exports, improve already functional code, and
-never own overlapping files. The default six responsibilities are geometry,
-scenery, player/camera, opponents, game progression, and HUD. Smaller counts merge
-responsibilities; larger counts split meaningful owned files. The complete original
-TASK remains in force. These are model instructions, not an enforcement guarantee;
-real engine runs must establish compliance and game quality.
+Root writes a short plan, frozen contracts and entry/telemetry wiring, then
+immediately delegates the coarse modules. It does not build the initial gameplay
+itself. Phase-1 builders implement the smallest useful functional modules with
+simple shapes and minimal presentation, leaving polish for later. The existing
+spawn calls block until the group returns; root then integrates the rough game
+and checks rendering with `test_game` and actual interaction with `play_game`.
+This early integration must produce usable controls, camera/HUD, basic gameplay
+and restart before phase 2 begins; a black shell does not qualify.
+
+Phase 2 launches fresh builders with the same exclusive file ownership and frozen
+exports. They read and refine the working files, completing every final TASK
+requirement while preserving the visible rough game. Root handles integration
+and final verification, without serially rewriting the modules. The default six
+responsibilities are geometry, scenery, player/camera, opponents, game progression,
+and HUD. Smaller counts merge responsibilities; larger counts split meaningful
+owned files. These are model instructions, not an enforcement guarantee; real
+engine runs must establish compliance and game quality.
 
 ## Outputs and process contract
 
