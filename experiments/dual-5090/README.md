@@ -8,8 +8,9 @@ this is not two separately limited containers.
 ## Frozen software and model inputs
 
 - Benchmark: `54d2a4f`, including two parallel builder phases and shared-wall rates.
-- BR: `ServeBig-project/Big-Rabbit@36908c15` with the `7e12dd6f` routing fix from
-  [PR #49](https://github.com/ServeBig-project/Big-Rabbit/pull/49), installed under
+- BR: `ServeBig-project/Big-Rabbit@8efade5d`, based on `36908c15` with fixes in
+  [PR #49](https://github.com/ServeBig-project/Big-Rabbit/pull/49) and
+  [PR #50](https://github.com/ServeBig-project/Big-Rabbit/pull/50), installed under
   `/opt/worldbuild/venvs/br` with CUDA 13.0 and Torch 2.11.0+cu130.
   Apply [br-constraints.txt](br-constraints.txt) when installing BR dependencies:
   Transformers 5.15.1 and tokenizers 0.22.2 preserve its existing raw-config path.
