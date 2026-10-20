@@ -1,0 +1,26 @@
+[
+  {
+    "id": "flash-next-paper2",
+    "name": "Flash-Next Paper2 (BR)",
+    "provider": "openai",
+    "provider_model_id": "flash-next-paper2",
+    "base_url": "http://127.0.0.1:1919/v1",
+    "api_key_env": "WORLDBUILD_LOCAL_API_KEY",
+    "pricing": {"input_per_mtok": 0, "output_per_mtok": 0},
+    "max_output_tokens": 32768,
+    "stream": true,
+    "vision": false
+  },
+  {
+    "id": "flash-next-strata-iq2",
+    "name": "Flash-Next IQ2_XS (Strata)",
+    "provider": "openai",
+    "provider_model_id": "qwen3.8-flash-next-iq2_xs",
+    "base_url": "http://127.0.0.1:18080/v1",
+    "api_key_env": "WORLDBUILD_LOCAL_API_KEY",
+    "pricing": {"input_per_mtok": 0, "output_per_mtok": 0},
+    "max_output_tokens": 32768,
+    "stream": true,
+    "vision": false
+  }
+]

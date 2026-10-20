@@ -1,0 +1,13 @@
+#!/bin/bash
+set -eo pipefail
+. /opt/nvm/nvm.sh
+case "$1" in
+  paper2) model=flash-next-paper2; label="BR Paper2"; cpus=64-67,192-195 ;;
+  strata) model=flash-next-strata-iq2; label="Strata IQ2_XS"; cpus=68-71,196-199 ;;
+  *) echo "usage: $0 paper2|strata" >&2; exit 2 ;;
+esac
+export WORLDBUILD_LOCAL_API_KEY=local CUDA_VISIBLE_DEVICES="" LIBGL_ALWAYS_SOFTWARE=1
+cd /opt/worldbuild/benchmark
+exec taskset -c "$cpus" bash experiments/multi-task/run.sh \
+  --model "$model" --engine "$label" --out "/opt/worldbuild/runs/$1" \
+  --builders 6 --effort medium --budget-mins 150

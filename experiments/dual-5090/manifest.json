@@ -1,0 +1,9 @@
+{
+  "hardware": "2 × RTX 5090 · one GPU per engine",
+  "runs": [
+    {"id":"paper2-arena","engine":"BR Paper2","task":"arena-combat","dir":"/opt/worldbuild/runs/paper2/arena-combat"},
+    {"id":"paper2-racing","engine":"BR Paper2","task":"racing","dir":"/opt/worldbuild/runs/paper2/racing"},
+    {"id":"strata-arena","engine":"Strata IQ2_XS","task":"arena-combat","dir":"/opt/worldbuild/runs/strata/arena-combat"},
+    {"id":"strata-racing","engine":"Strata IQ2_XS","task":"racing","dir":"/opt/worldbuild/runs/strata/racing"}
+  ]
+}

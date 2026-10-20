@@ -1,0 +1,29 @@
+{
+  "exe": "/opt/worldbuild/strata-engine/strata",
+  "args": [
+    "--pack", "/opt/worldbuild/strata-data/packs/iq2_xs",
+    "--native", "/opt/worldbuild/models/strata-iq2/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf",
+    "--ple-gguf", "/opt/worldbuild/models/strata-iq2/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf",
+    "--expert-profile", "/opt/worldbuild/strata/data/expert-profile.bin",
+    "--expert-cache", "auto",
+    "--prefill", "auto",
+    "--spec", "4",
+    "--spec-min-p", "0.5",
+    "--mtp", "/opt/worldbuild/strata-data/mtp/rt",
+    "--batch-mtp",
+    "--max-context", "262144",
+    "--kv", "int8",
+    "--kv-resident", "32768"
+  ],
+  "cwd": "/opt/worldbuild/strata",
+  "tokenizer": "/opt/worldbuild/strata-data/packs/iq2_xs/tokenizer",
+  "model_name": "qwen3.8-flash-next-iq2_xs",
+  "log": "/opt/worldbuild/logs/strata-engine.log",
+  "lib_dirs": ["/opt/worldbuild/strata-engine"],
+  "port": 18080,
+  "host": "127.0.0.1",
+  "gpu": 1,
+  "gpus_asked": true,
+  "parallel": 4,
+  "open_browser": false
+}
