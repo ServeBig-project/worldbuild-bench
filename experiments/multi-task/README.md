@@ -1,0 +1,129 @@
+# Two users, progressive game builds
+
+Run `arena-combat` and `racing` concurrently against one configured model endpoint.
+Each task has its own root orchestrator and two parallel builder phases. Six
+builders per phase is the default: up to twelve concurrent builder requests across
+the two games. Root delegates coarse modules immediately, integrates a rough
+playable game early, then delegates refinement to fresh builders. That is twelve
+builders total per task, twenty-four across both tasks; the two phases of one task
+do not overlap. Six is a practical starting configuration,
+not a benchmark recommendation or measured optimum. More agents can increase
+queueing and integration costs; no speedup or hardware saturation is promised.
+
+## Setup and runs
+
+Use Node 20+ from PATH; there is no NVM dependency. From the repository root:
+
+```bash
+npm ci
+npm run fetch-three
+npx playwright install chromium
+npx tsx src/cli.ts models
+```
+
+Configure the serving endpoint and select its existing registry id. Paper2 refers
+to your chosen NoWAG weights; this profile does not download weights, invent model
+paths, change caches or start either inference server. The existing
+`qwen38-flash-next-local` registry entry serves `nvfp4`, not Paper2: do not relabel
+it as Paper2. Configure a dedicated Paper2 registry id and verify the endpoint
+`/v1/models` identity and the recorded served model ids once the instance starts.
+Weight paths and deployment remain to be selected there. Start/configure each
+engine separately. Set `NOWAG_MODEL_ID` and `STRATA_MODEL_ID` to the registry entries that
+actually point at those endpoints, then run each round **sequentially**:
+
+```bash
+bash experiments/multi-task/run.sh --model "$NOWAG_MODEL_ID" \
+  --engine 'NoWAG Paper2' --out runs/demo-nowag --builders 6 --budget-mins 150
+
+# After the first round ends, switch the server to Strata with its chosen settings.
+bash experiments/multi-task/run.sh --model "$STRATA_MODEL_ID" \
+  --engine Strata --out runs/demo-strata --builders 6 --budget-mins 150
+```
+
+Both tasks within a round start concurrently with identical profile, builders per phase,
+effort and time backstop. Use the same options for the second engine. `--builders`
+accepts a positive integer; `--effort` accepts low/medium/high/xhigh (default medium).
+Each engine must support its selected effort through its registry configuration.
+Record actual weight quantization, cache/CPU/GPU/MTP settings alongside results;
+the runner cannot infer fairness from a label. Keep other workload settings equal.
+
+Root writes a short plan, frozen contracts and entry/telemetry wiring, then
+immediately delegates the coarse modules. It does not build the initial gameplay
+itself. Phase-1 builders implement the smallest useful functional modules with
+simple shapes and minimal presentation, leaving polish for later. The existing
+spawn calls block until the group returns; root then integrates the rough game
+and checks rendering with `test_game` and actual interaction with `play_game`.
+This early integration must produce usable controls, camera/HUD, basic gameplay
+and restart before phase 2 begins; a black shell does not qualify.
+
+Phase 2 launches fresh builders with the same exclusive file ownership and frozen
+exports. They read and refine the working files, completing every final TASK
+requirement while preserving the visible rough game. Root handles integration
+and final verification, without serially rewriting the modules. The default six
+responsibilities are geometry, scenery, player/camera, opponents, game progression,
+and HUD. Smaller counts merge responsibilities; larger counts split meaningful
+owned files. These are model instructions, not an enforcement guarantee; real
+engine runs must establish compliance and game quality.
+
+## Outputs and process contract
+
+`--out` must be a fresh directory. Before launching, the runner writes:
+
+- `manifest.json`: two dashboard entries, hardware label RTX 5090.
+- `prompts/`: the exact shared profile with requested builder count substituted.
+- `arena-combat.log`, `racing.log`: separate harness process output.
+- `outcomes.json`: per-task `running` then `finished`/`failed`, with terminal
+  `exitCode`, `signal`, `error` and result path.
+- `arena-combat/`, `racing/`: isolated fresh harness output directories, each with
+  its own workspace, transcript, live progress and final result.
+
+The runner invokes PATH-resolved `npx --no-install tsx src/cli.ts run --task TASK
+--model ID --run-dir DIR --effort TIER --budget-mins N`. The generic `wb run
+--run-dir DIR` option creates that exact directory and rejects existing directories;
+without it the normal timestamped runs directory behavior is unchanged. `run_id`
+remains the directory basename. If exporting reports from both engine roots,
+package their task folders under separate report roots: screenshot paths use
+`run_id/screenshots/...` and task basenames repeat across the two engines.
+
+The runner sets `WB_PROMPTS_DIR`, `WB_MAX_SPAWN_DEPTH=1` and a provider timeout equal
+to the round's wall backstop, reusing the local-engine fetch timeout preload. It
+preserves other provider environment settings. SIGINT/SIGTERM are forwarded only
+to its own task process groups, including child processes; exits are 130/143.
+Otherwise it waits for both tasks and exits 1 if either process fails, its result is
+missing, or the result reports agent/budget/gate errors; success exits 0. Low game
+scores remain visible in `result.json` and do not by themselves mean process error.
+
+## Dashboard
+
+While the first round is running:
+
+```bash
+node experiments/racing-4w/dashboard.mjs --runs runs/demo-nowag/manifest.json --port 8090
+```
+
+Keep the dashboard separate from the inference API (the existing Strata entry
+defaults to port 8080). To view it at local port 8080, forward
+`-L 8080:localhost:8090` on the SSH connection.
+
+For engine switching, create a combined manifest with the four absolute run
+directories and unique ids, as shown in the [dashboard contract](../racing-4w/dashboard.md).
+Each individual runner uses task names as ids; when combining, prefix them by
+engine (for example `nowag-arena` and `strata-arena`), rather than concatenating
+the two arrays with duplicate ids.
+Future directories can be listed before either round starts. The dashboard keeps
+an existing rendered game visible while a changed candidate fails or loads. It
+shows a preparing message before the first usable rendering, never a fabricated
+progress game. Input and output throughput are whole-round usage totals divided
+by the same actual wall interval across both tasks; per-task rates are additive
+contributions to that round. Running values use completed responses and remain
+provisional. Input includes cache hits, displayed separately as a reported subtotal;
+omitted cache reports do not prove zero hits. Enable BigRabbit
+`--enable-cache-report` when configuring the future endpoint for useful hit counts.
+These are not engine-only prefill/decode rates. See the dashboard contract for
+exact timestamps, historical timing limits and failed-run qualification.
+
+Use actual run results to compare both task times, the time until both finish,
+output usage, and playability/coherence scores. Generation timing excludes final
+browser scoring. The profile and dashboard can be verified locally with independent
+fixtures; actual 5090 concurrency/performance and model prompt compliance require
+the instance to be running and are not established by those fixtures.

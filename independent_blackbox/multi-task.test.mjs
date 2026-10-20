@@ -1,0 +1,586 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { mkdtemp, mkdir, writeFile, appendFile, readFile, rm, chmod } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:net';
+import { createServer as httpServer } from 'node:http';
+import { setTimeout as timeout } from 'node:timers/promises';
+
+const project = resolve(process.env.WB_TEST_ROOT ?? '');
+assert.ok(process.env.WB_TEST_ROOT, 'Set WB_TEST_ROOT to the production checkout');
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const engines = ['NoWAG Paper2', 'Strata'];
+const start = Date.now() - 60_000;
+const iso = offset => new Date(start + offset).toISOString();
+
+async function until(check, message, timeout = 20_000) {
+  const deadline = Date.now() + timeout;
+  let last;
+  while (Date.now() < deadline) {
+    try {
+      const value = await check();
+      if (value) return value;
+    } catch (error) { last = error; }
+    await delay(150);
+  }
+  throw new Error(`${message}${last ? `: ${last.message}` : ''}`);
+}
+
+async function port() {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const value = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return value;
+}
+
+function launch(command, args, options = {}) {
+  const child = spawn(command, args, { cwd: project, ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.on('data', data => { output += data; });
+  child.stderr.on('data', data => { output += data; });
+  const ended = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  return { child, ended, output: () => output };
+}
+
+async function stop(process) {
+  if (process.child.exitCode !== null || process.child.signalCode) return;
+  process.child.kill('SIGTERM');
+  await Promise.race([process.ended, delay(3_000)]);
+  if (process.child.exitCode === null && !process.child.signalCode) {
+    process.child.kill('SIGKILL');
+    await process.ended;
+  }
+}
+
+async function json(path, value) {
+  await writeFile(path, JSON.stringify(value));
+}
+
+async function runFixture(dir, count) {
+  await mkdir(join(dir, 'workspace'), { recursive: true });
+  const agents = [
+    { agent: 'root', depth: 0 },
+    ...Array.from({ length: count }, (_, i) => ({ agent: `root/builder-${i + 1}`, depth: 1 })),
+    ...(count > 4 ? [{ agent: 'root/builder-1/reviewer', depth: 2 }] : []),
+  ];
+  const events = agents.flatMap((identity, index) => [
+    { ts: iso(index * 100), type: 'request', turn: 1, ...identity },
+    { ts: iso(index * 100 + 50), type: 'response', inputTokens: 10, outputTokens: 5,
+      toolCalls: [], stopReason: 'end_turn', text: `Finished ${identity.agent}`, ...identity },
+  ]);
+  await writeFile(join(dir, 'transcript.jsonl'), events.map(event => JSON.stringify(event)).join('\n') + '\n');
+  await json(join(dir, 'live.json'), {});
+  return agents;
+}
+
+async function complete(dir, seconds, inputTokens, outputTokens, resumeCount) {
+  await json(join(dir, 'result.json'), {
+    created_at: iso(0), wall_clock_s: seconds,
+    agent: { tokens_in: inputTokens, tokens_out: outputTokens, error: null, budget_exhausted: null },
+    gate_error: null,
+    ...(resumeCount === undefined ? {} : { resumed: { count: resumeCount } }),
+  });
+}
+
+function game(build, { broken = false, webgl = false, omitHead = false } = {}) {
+  const html = `<!doctype html><html><head><title>Fixture ${build}</title>
+<style>html,body{margin:0;background:#15283b}canvas{display:block;width:100vw;height:100vh}</style></head>
+<body data-build="${build}"><canvas width="320" height="200"></canvas><script>
+const canvas=document.querySelector('canvas');
+let x=0;addEventListener('keydown',e=>{if(e.key==='ArrowRight')x+=1});
+${webgl ? `const gl=canvas.getContext('webgl');
+function render(){gl.disable(gl.SCISSOR_TEST);gl.clearColor(.1,.2,.3,1);gl.clear(gl.COLOR_BUFFER_BIT);
+gl.enable(gl.SCISSOR_TEST);gl.scissor(40+x,40,120,100);gl.clearColor(.9,.2,.1,1);gl.clear(gl.COLOR_BUFFER_BIT);
+requestAnimationFrame(render);}`
+    : `const ctx=canvas.getContext('2d');
+function render(){ctx.fillStyle='#153754';ctx.fillRect(0,0,320,200);
+ctx.fillStyle='#ffd23f';ctx.fillRect(60+x,50,110,90);requestAnimationFrame(render);}`}
+requestAnimationFrame(render);
+window.__bench={getState:()=>({x,playing:true}),reset:()=>{x=0},
+getPlayerPosition:()=>({x,y:0,z:0}),getCameraInfo:()=>({position:{x:0,y:3,z:8}}),
+getEntities:()=>[{id:'player',position:{x,y:0,z:0}}],
+getObjectiveStatus:()=>({complete:false,progress:0})};
+${broken ? "setTimeout(()=>{throw new Error('Deliberately broken supported edit')},200);" : ''}
+</script></body></html>`;
+  return omitHead ? html.replace(/<\/?head>/g, '') : html;
+}
+
+test('dashboard isolates four runs, freezes final usage/time, and preserves the playable preview', { timeout: 100_000 }, async t => {
+  // A failure changes delivery: missing agents, mixed run data, or lost live games block the demo.
+  const temp = await mkdtemp(join(tmpdir(), 'worldbuild-blackbox-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const rows = engines.flatMap((engine, e) => ['arena-combat', 'racing'].map(task => ({
+    id: `${e ? 'strata' : 'nowag'}-${task}`, engine, task, dir: join(temp, `${e}-${task}`),
+  })));
+  const descendants = await runFixture(rows[0].dir, 7);
+  await runFixture(rows[1].dir, 2);
+  await runFixture(rows[2].dir, 1);
+  const manifest = join(temp, 'manifest.json');
+  await json(manifest, { hardware: 'RTX 5090', runs: rows });
+  const dashboardPort = await port();
+  const server = launch(process.execPath, [join(project, 'experiments/racing-4w/dashboard.mjs'),
+    '--runs', manifest, '--port', String(dashboardPort)]);
+  t.after(() => stop(server));
+  const base = `http://127.0.0.1:${dashboardPort}`;
+  const state = async engine => {
+    const response = await fetch(`${base}/api/state?engine=${encodeURIComponent(engine)}`);
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  await until(() => state(engines[0]), `Dashboard startup failed ${server.output()}`);
+  const first = await state(engines[0]);
+  assert.equal(first.hardware, 'RTX 5090');
+  assert.deepEqual(new Set(first.engines), new Set(engines));
+  assert.equal(first.runs.length, 2);
+  assert.ok(first.runs.every(run => run.engine === engines[0]));
+  const arena = first.runs.find(run => run.task === 'arena-combat');
+  assert.deepEqual(new Set([arena.root, ...arena.builders].map(agent => agent.agent)),
+    new Set(descendants.map(agent => agent.agent)));
+  assert.equal(arena.inputTokens, 90);
+  assert.equal(arena.outputTokens, 45);
+  assert.equal(first.aggregate.inputTokens, 120);
+  assert.equal(first.aggregate.outputTokens, 60);
+  const other = await state(engines[1]);
+  assert.equal(other.aggregate.inputTokens, 20);
+  const waiting = other.runs.find(run => run.task === 'racing');
+  assert.equal(waiting.status, 'waiting');
+  assert.equal(waiting.inputTokens, 0);
+  assert.equal(waiting.outputTokens, 0);
+  assert.equal((await fetch(`${base}/api/state?engine=missing`)).status, 404);
+
+  const require = createRequire(join(project, 'package.json'));
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--enable-unsafe-swiftshader'] });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.goto(base);
+  await until(async () => (await page.locator('body').innerText()).includes('root/builder-7'),
+    'UI must display builders beyond the former four-agent limit');
+  const text = await page.locator('body').innerText();
+  assert.match(text, /arena[- ]combat/i);
+  assert.match(text, /racing/i);
+  assert.ok(text.includes('RTX 5090') && !text.includes('4090'));
+  assert.ok(text.includes('root/builder-1/reviewer'));
+  const selectors = page.locator('select');
+  const engineSelect = await until(async () => {
+    for (const select of await selectors.all()) {
+      if ((await select.locator('option').allTextContents()).includes(engines[1])) return select;
+    }
+  }, 'An engine selector must expose both engines');
+  await engineSelect.selectOption({ label: engines[1] });
+  await until(async () => !(await page.locator('body').innerText()).includes('root/builder-7'),
+    'Engine switch must remove the other engine agents');
+  await engineSelect.selectOption({ label: engines[0] });
+  assert.match(await page.locator('body').innerText(), /prepar/i);
+  const active = descendants.filter(agent => agent.depth === 1);
+  await appendFile(join(rows[0].dir, 'transcript.jsonl'), active.map(agent =>
+    JSON.stringify({ ts: new Date().toISOString(), type: 'request', turn: 2, ...agent })).join('\n') + '\n');
+  await json(join(rows[0].dir, 'live.json'), Object.fromEntries(active.map(({ agent }) =>
+    [agent, { firstTokenMs: 20, elapsedMs: 1000, reasoningChars: 100, contentChars: 200, toolArgChars: 0 }])));
+  await until(async () => {
+    const current = await state(engines[0]);
+    return current.aggregate.running >= 7 && current.batch.series.some(point => point.running >= 7);
+  }, 'Concurrency data must represent more than four active builders');
+  await until(async () => {
+    const text = await page.locator('body').innerText();
+    return /input[\s\S]*cache/i.test(text) && /output/i.test(text) &&
+      /reported[\s\S]*cache|cache[\s\S]*reported/i.test(text);
+  }, 'Input including cache and reported cached tokens must be visible');
+  assert.doesNotMatch(await page.locator('body').innerText(), /estimat/i);
+  await json(join(rows[0].dir, 'live.json'), {});
+
+  const visibleFrame = async build => {
+    for (const frame of page.frames().slice(1)) {
+      try {
+        if (await frame.locator('body').getAttribute('data-build') !== build) continue;
+        const element = await frame.frameElement();
+        if (await element.isVisible() &&
+          await element.evaluate(el => Number(getComputedStyle(el).opacity) > 0.9)) return frame;
+      } catch { /* Frames can detach while a healthy candidate is promoted. */ }
+    }
+  };
+  const artifact = join(rows[0].dir, 'workspace/index.html');
+  await writeFile(artifact, game('first'));
+  const healthy = await until(() => visibleFrame('first'), 'A rendered canvas with valid telemetry must become playable');
+  await healthy.locator('canvas').click();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await healthy.evaluate(() => window.__bench.getPlayerPosition().x), 1);
+  await writeFile(artifact, game('broken', { broken: true }));
+  await delay(4_000);
+  assert.ok(await visibleFrame('first'), 'A runtime-error edit must retain the last healthy iframe');
+  assert.equal(await healthy.evaluate(() => window.__bench.getPlayerPosition().x), 1,
+    'Retaining preview must preserve its live state rather than reload old HTML');
+  assert.equal(await visibleFrame('broken'), undefined, 'An errored candidate must not become the displayed game');
+  await writeFile(artifact, game('webgl', { webgl: true }));
+  const recovered = await until(() => visibleFrame('webgl'), 'A visibly rendered WebGL replacement must recover');
+  await recovered.locator('canvas').click();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await recovered.evaluate(() => window.__bench.getPlayerPosition().x), 1);
+  const gameResponse = await fetch(`${base}/game/${rows[0].id}/index.html`);
+  assert.equal(gameResponse.status, 200);
+  assert.match(await gameResponse.text(), /data-build="webgl"/);
+  await writeFile(artifact, game('no-head', { webgl: true, omitHead: true }));
+  await until(() => visibleFrame('no-head'), 'Valid rendered HTML without an explicit head must become playable');
+
+  await complete(rows[0].dir, 10, 101, 51);
+  await complete(rows[1].dir, 20, 202, 102);
+  const final = await until(async () => {
+    const value = await state(engines[0]);
+    return value.aggregate.completed && value;
+  }, 'Both terminal tasks must complete their engine');
+  assert.equal(final.aggregate.inputTokens, 303);
+  assert.equal(final.aggregate.outputTokens, 153);
+  assert.equal(final.aggregate.elapsedMs, 20_000);
+  assert.deepEqual(final.runs.map(run => run.elapsedMs).sort((a, b) => a - b), [10_000, 20_000]);
+  await delay(1_200);
+  const frozen = await state(engines[0]);
+  assert.equal(frozen.aggregate.elapsedMs, final.aggregate.elapsedMs);
+  assert.ok(frozen.runs.every(run => run.status === 'finished'));
+  await appendFile(join(rows[0].dir, 'transcript.jsonl'), JSON.stringify({
+    ts: new Date().toISOString(), agent: 'runner', depth: 0, type: 'resume', resumeCount: 1,
+  }) + '\n');
+  const resumed = await until(async () => {
+    const value = await state(engines[0]);
+    return !value.aggregate.completed && value.runs.find(run => run.id === rows[0].id)?.status === 'running' && value;
+  }, 'Resume must supersede the stale terminal result');
+  const resumedArena = resumed.runs.find(run => run.id === rows[0].id);
+  assert.ok(resumedArena.elapsedMs >= 10_000 && resumedArena.elapsedMs < 20_000,
+    'Resumed elapsed time must retain prior work and exclude downtime');
+  await until(async () => (await state(engines[0])).runs.find(run => run.id === rows[0].id).elapsedMs >
+    resumedArena.elapsedMs + 500, 'Resumed task time must advance');
+  await complete(rows[0].dir, 11, 111, 55, 1);
+  const reFinished = await until(async () => {
+    const value = await state(engines[0]);
+    return value.aggregate.completed && value;
+  }, 'Matching resumed result must complete the engine again');
+  assert.equal(reFinished.runs.find(run => run.id === rows[0].id).elapsedMs, 11_000);
+  assert.equal(reFinished.aggregate.elapsedMs, 20_000);
+});
+
+test('legacy single-run invocation serves its public game URL', { timeout: 20_000 }, async t => {
+  // Breaking this check would remove the existing documented demo entrypoint.
+  const dir = await mkdtemp(join(tmpdir(), 'worldbuild-legacy-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await runFixture(dir, 1);
+  await writeFile(join(dir, 'workspace/index.html'), game('legacy'));
+  const dashboardPort = await port();
+  const server = launch(process.execPath, [join(project, 'experiments/racing-4w/dashboard.mjs'),
+    '--run', dir, '--engine', 'Strata', '--port', String(dashboardPort)]);
+  t.after(() => stop(server));
+  const response = await until(async () => {
+    const result = await fetch(`http://127.0.0.1:${dashboardPort}/game/index.html`);
+    return result.status === 200 && result;
+  }, `Legacy game route unavailable ${server.output()}`);
+  assert.match(await response.text(), /data-build="legacy"/);
+});
+
+test('runner starts both tasks, publishes the manifest, and terminates children on interruption', { timeout: 20_000 }, async t => {
+  // A failure means the documented runner cannot coordinate two tasks or leaves its own children behind.
+  const temp = await mkdtemp(join(tmpdir(), 'worldbuild-runner-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const bin = join(temp, 'bin');
+  await mkdir(bin);
+  const executable = join(bin, 'npx');
+  await writeFile(executable, `#!/usr/bin/env node
+const fs=require('node:fs'),path=require('node:path');
+const args=process.argv.slice(2),value=flag=>args[args.indexOf(flag)+1];
+const task=value('--task'),dir=value('--run-dir');
+fs.mkdirSync(dir,{recursive:true});
+fs.writeFileSync(path.join(process.env.WB_FAKE_LOG,task+'.json'),JSON.stringify({
+args,pid:process.pid,dir,prompts:process.env.WB_PROMPTS_DIR,depth:process.env.WB_MAX_SPAWN_DEPTH}));
+if(process.env.WB_FAKE_FAIL_TASK)setTimeout(()=>process.exit(task===process.env.WB_FAKE_FAIL_TASK?17:0),300);
+if(process.env.WB_FAKE_SUCCESS)setTimeout(()=>{
+fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify({
+created_at:new Date().toISOString(),wall_clock_s:.3,
+agent:{tokens_in:10,tokens_out:5,error:null,budget_exhausted:null},gate_error:null}));
+process.exit(0);
+},300);
+setInterval(()=>{},1000);
+`);
+  await chmod(executable, 0o755);
+  const out = join(temp, 'out');
+  const runner = launch('bash', [join(project, 'experiments/multi-task/run.sh'),
+    '--model', 'blackbox/local', '--engine', 'Strata', '--out', out, '--builders', '7', '--budget-mins', '1'],
+  { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WB_FAKE_LOG: temp } });
+  t.after(() => stop(runner));
+  const invocations = await until(async () => Promise.all(['arena-combat', 'racing'].map(async task =>
+    JSON.parse(await readFile(join(temp, `${task}.json`), 'utf8')))), `Both runner tasks must start ${runner.output()}`);
+  const manifest = JSON.parse(await readFile(join(out, 'manifest.json'), 'utf8'));
+  assert.deepEqual(new Set(manifest.runs.map(run => run.task)), new Set(['arena-combat', 'racing']));
+  for (const [i, task] of ['arena-combat', 'racing'].entries()) {
+    assert.equal(invocations[i].dir, join(out, task));
+    assert.equal(manifest.runs.find(run => run.task === task).dir, join(out, task));
+    assert.ok(manifest.runs.every(run => run.engine === 'Strata'));
+    assert.ok(invocations[i].args.includes('blackbox/local'));
+    assert.equal(invocations[i].depth, '1');
+    assert.match(await readFile(join(invocations[i].prompts, 'rules-spawn-orch.md'), 'utf8'),
+      /exactly 7 builder subagents/);
+  }
+  runner.child.kill('SIGTERM');
+  await Promise.race([runner.ended, delay(5_000).then(() => { throw new Error('Runner ignored interruption'); })]);
+  await until(() => invocations.every(({ pid }) => {
+    try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
+  }), 'Runner interruption must stop both child processes', 5_000);
+  const failed = launch('bash', [join(project, 'experiments/multi-task/run.sh'),
+    '--model', 'blackbox/local', '--engine', 'Strata', '--out', join(temp, 'failed'), '--budget-mins', '1'],
+  { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WB_FAKE_LOG: temp, WB_FAKE_FAIL_TASK: 'racing' } });
+  t.after(() => stop(failed));
+  const failure = await Promise.race([failed.ended,
+    delay(5_000).then(() => { throw new Error('Runner did not report a failing child'); })]);
+  assert.notEqual(failure.code, 0, 'A task failure must fail the runner');
+  assert.match(failed.output(), /racing|fail|17/i, 'A task failure must produce a visible diagnostic');
+  const defaults = JSON.parse(await readFile(join(temp, 'racing.json'), 'utf8'));
+  assert.match(await readFile(join(defaults.prompts, 'rules-spawn-orch.md'), 'utf8'),
+    /exactly 6 builder subagents/);
+  const successOut = join(temp, 'success');
+  const success = launch('bash', [join(project, 'experiments/multi-task/run.sh'),
+    '--model', 'blackbox/local', '--engine', 'Strata', '--out', successOut, '--budget-mins', '1'],
+  { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WB_FAKE_LOG: temp, WB_FAKE_SUCCESS: '1' } });
+  t.after(() => stop(success));
+  const succeeded = await Promise.race([success.ended,
+    delay(5_000).then(() => { throw new Error('Runner did not finish after both tasks succeeded'); })]);
+  assert.equal(succeeded.code, 0, `Successful tasks must succeed the runner: ${success.output()}`);
+  const outcomes = JSON.parse(await readFile(join(successOut, 'outcomes.json'), 'utf8'));
+  assert.deepEqual(Object.keys(outcomes).sort(), ['arena-combat', 'racing']);
+  for (const task of ['arena-combat', 'racing']) {
+    assert.equal(outcomes[task].status, 'finished');
+    assert.equal(outcomes[task].exitCode, 0);
+    assert.equal(outcomes[task].signal, null);
+    assert.equal(outcomes[task].error, null);
+    assert.equal(resolve(outcomes[task].result), join(successOut, task, 'result.json'));
+  }
+});
+
+test('CLI uses the exact fresh run directory and rejects overwriting it', { timeout: 100_000 }, async t => {
+  // The runner's real CLI option must preserve the requested directory and refuse data loss.
+  const temp = await mkdtemp(join(tmpdir(), 'worldbuild-cli-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  let requests = 0;
+  const provider = httpServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const input = JSON.parse(body || '{}');
+    requests += 1;
+    // Seed our fixture so scoring exercises a real browser instead of failing on a missing game.
+    await mkdir(join(dir, 'workspace'), { recursive: true });
+    await writeFile(join(dir, 'workspace/index.html'), game('cli-scoring', { webgl: true }));
+    const usage = { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 };
+    if (input.stream) {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      for (const chunk of [
+        { choices: [{ index: 0, delta: { role: 'assistant', content: 'done' }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage },
+      ]) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      response.end('data: [DONE]\n\n');
+    } else {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({
+        choices: [{ index: 0, message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }], usage,
+      }));
+    }
+  });
+  provider.listen(0, '127.0.0.1');
+  await once(provider, 'listening');
+  t.after(() => new Promise(resolve => provider.close(resolve)));
+  const dir = join(temp, 'chosen-run-name');
+  const args = ['--no-install', 'tsx', 'src/cli.ts', 'run', '--task', 'arena-combat',
+    '--model', 'kimi-k3', '--run-dir', dir, '--budget-mins', '1', '--max-turns', '1'];
+  const env = { ...process.env, MOONSHOT_API_KEY: 'test',
+    MOONSHOT_BASE_URL: `http://127.0.0.1:${provider.address().port}/v1` };
+  const first = launch('npx', args, { env });
+  t.after(() => stop(first));
+  const beforeScoringResult = await until(async () => {
+    const lines = (await readFile(join(dir, 'transcript.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    const end = lines.find(event => event.type === 'generation_end');
+    if (!end) return;
+    let resultWritten = false;
+    try { await readFile(join(dir, 'result.json')); resultWritten = true; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    return { end, resultWritten, running: first.child.exitCode === null && !first.child.signalCode };
+  }, 'Generation end must become readable before final browser scoring result', 75_000);
+  assert.equal(beforeScoringResult.resultWritten, false);
+  assert.equal(beforeScoringResult.running, true);
+  await Promise.race([first.ended,
+    timeout(75_000, undefined, { ref: false }).then(() => { throw new Error(`CLI did not finish: ${first.output()}`); })]);
+  assert.ok(requests > 0, `CLI must use the local provider: ${first.output()}`);
+  const original = await readFile(join(dir, 'result.json'), 'utf8');
+  const result = JSON.parse(original);
+  assert.equal(result.run_id, 'chosen-run-name');
+  const events = (await readFile(join(dir, 'transcript.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  const began = events.find(event => event.type === 'start');
+  const ended = events.find(event => event.type === 'generation_end');
+  assert.ok(began && ended, 'Real CLI must emit generation boundary events');
+  assert.equal(began.createdAt, result.created_at);
+  assert.equal(ended.createdAt, result.created_at);
+  assert.equal(ended.ts, result.generation_finished_at);
+  assert.equal(ended.ts, beforeScoringResult.end.ts);
+  assert.ok(Date.parse(ended.ts) >= Date.parse(began.ts));
+  assert.equal(ended.inputTokens, result.agent.tokens_in);
+  assert.equal(ended.outputTokens, result.agent.tokens_out);
+  assert.equal(ended.cachedInputTokens, result.agent.tokens_in_cached ?? 0);
+  assert.equal(ended.usagePartial, Boolean(result.agent.error || result.agent.budget_exhausted));
+  const count = requests;
+  const second = launch('npx', args, { env });
+  t.after(() => stop(second));
+  const rejected = await Promise.race([second.ended,
+    timeout(10_000, undefined, { ref: false }).then(() => { throw new Error('Existing run directory was not rejected promptly'); })]);
+  assert.notEqual(rejected.code, 0);
+  assert.match(second.output(), /exist|fresh|overwrite/i);
+  assert.equal(requests, count, 'Existing directory rejection must happen before model execution');
+  assert.equal(await readFile(join(dir, 'result.json'), 'utf8'), original, 'Existing result must remain unchanged');
+});
+
+test('throughput uses a common engine wall clock, reported usage, and actual generation completion', { timeout: 30_000 }, async t => {
+  // Summed task rates, cache subtraction, scoring time, or character estimates misstate the benchmark.
+  const temp = await mkdtemp(join(tmpdir(), 'worldbuild-throughput-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const rows = engines.flatMap((engine, i) => ['arena-combat', 'racing'].map(task => ({
+    id: `${i}-${task}`, engine, task, dir: join(temp, `${i}-${task}`),
+  })));
+  const manifest = join(temp, 'manifest.json');
+  await json(manifest, { hardware: 'RTX 5090', runs: rows });
+  const dashboardPort = await port();
+  const server = launch(process.execPath, [join(project, 'experiments/racing-4w/dashboard.mjs'),
+    '--runs', manifest, '--port', String(dashboardPort)]);
+  t.after(() => stop(server));
+  const state = async (engine = engines[0]) => {
+    const response = await fetch(`http://127.0.0.1:${dashboardPort}/api/state?engine=${encodeURIComponent(engine)}`);
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const waiting = await until(() => state(), 'Throughput dashboard must start');
+  for (const value of [waiting.aggregate, ...waiting.runs]) {
+    assert.equal(value.inputTps, null);
+    assert.equal(value.outputTps, null);
+    assert.equal(value.throughputElapsedMs, null);
+    assert.equal(value.throughputTimeSource, 'unavailable');
+  }
+  const epoch = Date.now() - 30_000;
+  const stamp = seconds => new Date(epoch + seconds * 1000).toISOString();
+  const event = (type, seconds, fields = {}) => ({ type, agent: 'runner', depth: 0, ts: stamp(seconds), ...fields });
+  const writeEvents = async (row, events) => {
+    await mkdir(row.dir, { recursive: true });
+    await writeFile(join(row.dir, 'transcript.jsonl'), events.map(value => JSON.stringify(value)).join('\n') + '\n');
+  };
+  const responses = (agent, seconds, inputTokens, outputTokens, cachedInputTokens) =>
+    event('response', seconds, { agent, depth: agent === 'root' ? 0 : 1,
+      inputTokens, outputTokens, cachedInputTokens, toolCalls: [], stopReason: 'end_turn', text: 'done' });
+  const starts = [0, 2], ends = [10, 20], inputs = [1000, 2000], outputs = [100, 300], cached = [200, 500];
+  await writeEvents(rows[0], [
+    event('start', 0, { createdAt: stamp(0) }),
+    responses('root', 1, 100, 10, 20), responses('root/builder', 3, 900, 90, 180),
+    event('tool_call', 5, { agent: 'root', tool: 'check_modules', summary: 'tool time remains in wall clock' }),
+  ]);
+  await writeEvents(rows[1], [
+    event('start', 2, { createdAt: stamp(2) }), responses('root', 4, 2000, 300, 500),
+  ]);
+  await json(join(rows[0].dir, 'live.json'), Object.fromEntries(Array.from({ length: 10 }, (_, i) =>
+    [`root/live-${i}`, { firstTokenMs: 1, elapsedMs: 1000, reasoningChars: 9_000_000, contentChars: 9_000_000, toolArgChars: 9_000_000 }])));
+  const active = await until(async () => {
+    const value = await state();
+    return value.aggregate.inputTokens === 3000 && value;
+  }, 'Known response usage must appear while generation is active');
+  assert.equal(active.aggregate.outputTokens, 400);
+  assert.equal(active.aggregate.cachedInputTokens, 700);
+  assert.equal(active.aggregate.throughputProvisional, true);
+  assert.ok(active.aggregate.throughputElapsedMs >= 30_000);
+  assert.ok(Math.abs(active.aggregate.inputTps - 3000 * 1000 / active.aggregate.throughputElapsedMs) < 1e-6);
+  assert.ok(Math.abs(active.aggregate.outputTps - 400 * 1000 / active.aggregate.throughputElapsedMs) < 1e-6);
+  assert.ok(!JSON.stringify(active).includes('estimatedTps'), 'Character-estimated rates must be removed from the API');
+  for (let i = 0; i < 2; i++) {
+    await appendFile(join(rows[i].dir, 'transcript.jsonl'), JSON.stringify(event('generation_end', ends[i], {
+      createdAt: stamp(starts[i]), resumeCount: 0, inputTokens: inputs[i], outputTokens: outputs[i],
+      cachedInputTokens: cached[i], usagePartial: false,
+    })) + '\n');
+  }
+  const scored = await until(async () => {
+    const value = await state();
+    return value.aggregate.throughputElapsedMs === 20_000 && value;
+  }, 'Generation-end events must freeze throughput before scoring finishes');
+  const checkFinal = value => {
+    assert.equal(value.aggregate.inputTps, 150);
+    assert.equal(value.aggregate.outputTps, 20);
+    assert.equal(value.aggregate.cachedInputTokens, 700);
+    assert.equal(value.aggregate.throughputProvisional, false);
+    assert.equal(value.aggregate.throughputTimeSource, 'recorded');
+    for (let i = 0; i < 2; i++) {
+      const run = value.runs.find(run => run.id === rows[i].id);
+      assert.equal(run.inputTps, inputs[i] / 20);
+      assert.equal(run.outputTps, outputs[i] / 20);
+      assert.equal(run.throughputElapsedMs, 20_000);
+      assert.equal(run.generationStartedAt, epoch + starts[i] * 1000);
+      assert.equal(run.generationFinishedAt, epoch + ends[i] * 1000);
+    }
+  };
+  checkFinal(scored);
+  await delay(600);
+  checkFinal(await state());
+  for (let i = 0; i < 2; i++) {
+    await json(join(rows[i].dir, 'result.json'), {
+      created_at: stamp(starts[i]), generation_finished_at: stamp(ends[i]), wall_clock_s: ends[i] - starts[i],
+      agent: { tokens_in: inputs[i], tokens_out: outputs[i], tokens_in_cached: cached[i], error: null, budget_exhausted: null },
+      gate_error: null,
+    });
+  }
+  checkFinal(await until(async () => {
+    const value = await state();
+    return value.aggregate.completed && value;
+  }, 'Final results must preserve the recorded-generation rates'));
+  const isolated = await state(engines[1]);
+  assert.equal(isolated.aggregate.inputTokens, 0);
+  assert.equal(isolated.aggregate.cachedInputTokens, 0);
+  assert.equal(isolated.aggregate.inputTps, null);
+  await writeEvents(rows[2], [event('start', 0, { createdAt: stamp(0) })]);
+  const legacy = { created_at: stamp(0), wall_clock_s: 10,
+    agent: { tokens_in: 50, tokens_out: 10, error: null, budget_exhausted: null }, gate_error: null };
+  await json(join(rows[2].dir, 'result.json'), legacy);
+  const rounded = await until(async () => {
+    const value = await state(engines[1]);
+    return value.aggregate.throughputTimeSource === 'legacy-rounded' && value;
+  }, 'Unresumed old results must identify rounded timing');
+  assert.equal(rounded.aggregate.inputTps, 5);
+  assert.equal(rounded.aggregate.outputTps, 1);
+  assert.equal(rounded.aggregate.cachedInputTokens, 0);
+  assert.equal(rounded.aggregate.throughputProvisional, true, 'A future waiting task leaves the round provisional');
+  await appendFile(join(rows[2].dir, 'transcript.jsonl'), JSON.stringify(event('resume', 20, {
+    createdAt: stamp(0), resumeCount: 1, priorWallS: 10,
+  })) + '\n');
+  await json(join(rows[2].dir, 'result.json'), { ...legacy, wall_clock_s: 11, resumed: { count: 1 } });
+  const unavailable = await until(async () => {
+    const value = await state(engines[1]);
+    return value.aggregate.throughputTimeSource === 'unavailable' && value;
+  }, 'A resumed legacy final without recorded end must not fabricate elapsed wall time');
+  assert.equal(unavailable.aggregate.inputTps, null);
+  assert.equal(unavailable.aggregate.outputTps, null);
+  assert.equal(unavailable.aggregate.throughputElapsedMs, null);
+  assert.ok(unavailable.aggregate.throughputUnavailableReason);
+  await json(join(rows[2].dir, 'result.json'), {
+    ...legacy, wall_clock_s: 11, resumed: { count: 1 }, generation_finished_at: stamp(35),
+  });
+  const resumedWall = await until(async () => {
+    const value = await state(engines[1]);
+    return value.aggregate.throughputTimeSource === 'recorded' && value;
+  }, 'A recorded resumed end must recover actual wall timing');
+  assert.equal(resumedWall.aggregate.throughputElapsedMs, 35_000, 'Throughput wall time includes resume downtime');
+  assert.equal(resumedWall.aggregate.inputTps, 50 / 35);
+  assert.equal(resumedWall.aggregate.outputTps, 10 / 35);
+  const failedResult = JSON.parse(await readFile(join(rows[0].dir, 'result.json'), 'utf8'));
+  failedResult.agent.error = 'Provider stopped after recorded partial usage';
+  const failedEvents = (await readFile(join(rows[0].dir, 'transcript.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  failedEvents.find(event => event.type === 'generation_end').usagePartial = true;
+  await writeEvents(rows[0], failedEvents);
+  await json(join(rows[0].dir, 'result.json'), failedResult);
+  const partial = await until(async () => {
+    const value = await state();
+    return value.runs.some(run => run.status === 'failed') && value;
+  }, 'Failed generation remains visibly partial even after it terminates');
+  assert.equal(partial.aggregate.throughputProvisional, true);
+  assert.equal(partial.aggregate.inputTokens, 3000);
+  assert.equal(partial.aggregate.outputTokens, 400);
+});
