@@ -15,11 +15,11 @@ engines = [("BR", args.br_url, "flash-next-paper2"),
            ("Strata", args.strata_url, "qwen3.8-flash-next-iq2_xs")]
 engines = [engine for engine in engines if args.engine == "both" or engine[0].lower() == args.engine]
 
-def request(base, path, payload=None):
+def request(base, path, payload=None, timeout=120):
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(base.rstrip("/") + path, data=data,
                                  headers={"Content-Type": "application/json"})
-    return urllib.request.urlopen(req, timeout=120)
+    return urllib.request.urlopen(req, timeout=timeout)
 
 def probe(engine, base, model, kind):
     started = time.monotonic()
@@ -40,7 +40,7 @@ def probe(engine, base, model, kind):
                 "parameters": {"type": "object", "properties": {"value": {"type": "integer"}},
                                "required": ["value"], "additionalProperties": False}}}]
         text, reasoning, calls, usage, finish, done = "", "", {}, None, None, False
-        with request(base, "/chat/completions", payload) as response:
+        with request(base, "/chat/completions", payload, timeout=600 if kind.startswith("long-") else 120) as response:
             for line in response:
                 line = line.decode().strip()
                 if not line.startswith("data:"):
