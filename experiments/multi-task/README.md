@@ -86,8 +86,12 @@ scores remain visible in `result.json` and do not by themselves mean process err
 While the first round is running:
 
 ```bash
-node experiments/racing-4w/dashboard.mjs --runs runs/demo-nowag/manifest.json --port 8080
+node experiments/racing-4w/dashboard.mjs --runs runs/demo-nowag/manifest.json --port 8090
 ```
+
+Keep the dashboard separate from the inference API (the existing Strata entry
+defaults to port 8080). To view it at local port 8080, forward
+`-L 8080:localhost:8090` on the SSH connection.
 
 For engine switching, create a combined manifest with the four absolute run
 directories and unique ids, as shown in the [dashboard contract](../racing-4w/dashboard.md).
