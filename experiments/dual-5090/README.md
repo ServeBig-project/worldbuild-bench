@@ -63,14 +63,13 @@ No third-party kernel patch or FlashInfer throughput claim was made.
 
 Place launchers under `/opt/worldbuild/`, configuration under `/opt/worldbuild/config/`,
 and register `supervisor.conf`. Merge `model-entries.json` into the benchmark registry.
-Only the dashboard starts automatically. Start BR, verify the served model, GPU1,
-INT8 KV, backend/fetch fraction and NoWAG kernel preparation, then run the existing
-independently authored probes:
+Only the dashboard starts automatically. For this rerun the user explicitly waived
+API acceptance probes: once the BR health endpoint becomes ready, start its benchmark
+directly. No short, tool-call or long-prompt probe is part of this run.
 
 ```bash
 supervisorctl start worldbuild-br
-python3 /opt/worldbuild/deployment_probe.py --engine br --br-model flash-next-paper2
-python3 /opt/worldbuild/deployment_probe.py --engine br --br-model flash-next-paper2 --long-prompts
+# After model loading completes:
 supervisorctl start worldbuild-bench-br
 ```
 
