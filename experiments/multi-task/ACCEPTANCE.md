@@ -1,15 +1,22 @@
 # Local acceptance
 
-Baseline: `harness-v2@0f579a8`. Implementation: `71c9909`.
+Baseline: `harness-v2@0f579a8`. Implementation: `3db436e`.
 Independent test author received only public CLI, HTTP, artifact and UI contracts;
 it did not read implementation, internal tests or diffs. The coordinator ran the
 checks and integrated the test commits.
 
 ## Results
 
-- TypeScript build passed.
-- Existing suite: 78/78 passed after downloading the documented scaffold libraries.
-- Independent suite: 4/4 passed in 36.4 seconds.
+- TypeScript build passed for `71c9909`; corrected dashboard phase labels passed
+  JavaScript syntax checking.
+- Existing suite: 78/78 passed for `71c9909` after downloading the scaffold libraries.
+- Independent suite: 4/4 passed for `71c9909` in 36.4 seconds.
+- After the two-phase orchestration correction, the existing independent runner
+  scenario passed again, covering counts, success, failure and interruption.
+- Independent review of the runner's generated public prompt files passed:
+  root defines interfaces/entry glue, parallel builders deliver coarse modules,
+  root integrates and verifies the rough game, then fresh builders refine it.
+  This verifies the instructions, not real-model compliance.
 - Browser checks covered task/engine isolation, more than four builders, seven
   active requests, accurate final usage, frozen completion, resumed progress,
   retained interactive previews through broken edits, WebGL recovery and valid
@@ -38,7 +45,7 @@ WB_TEST_ROOT="$PWD" node --test independent_blackbox/multi-task.test.mjs
 ## Change size
 
 Relative to the baseline: executable production code **+401/-207, net +194**;
-behavioral prompts **+19/-0**; combined production **+420/-207, net +213**.
+behavioral prompts **+20/-0**; combined production **+421/-207, net +214**.
 Independent test code **+405/-0**. Documentation, downloaded libraries and
 generated build output are excluded.
 
@@ -53,5 +60,6 @@ generated build output are excluded.
 | `98c27d5` successful completion | 0 / 0 / 0 | 23 / 0 / 23 |
 | `a84cd6e` resume and HTML cases | 0 / 0 / 0 | 26 / 3 / 23 |
 | `93f1190` real CLI with local provider | 0 / 0 / 0 | 53 / 0 / 53 |
+| `3db436e` parallel coarse build and early integration | 14 / 13 / 1 | 0 / 0 / 0 |
 
 The final acceptance/port documentation commit changes no production or test code.
