@@ -187,8 +187,12 @@ test('dashboard isolates four runs, freezes final usage/time, and preserves the 
     const current = await state(engines[0]);
     return current.aggregate.running >= 7 && current.batch.series.some(point => point.running >= 7);
   }, 'Concurrency data must represent more than four active builders');
-  await until(async () => /estimat/i.test(await page.locator('body').innerText()),
-    'Character-based token rate must be labeled as an estimate');
+  await until(async () => {
+    const text = await page.locator('body').innerText();
+    return /input[\s\S]*cache/i.test(text) && /output/i.test(text) &&
+      /reported[\s\S]*cache|cache[\s\S]*reported/i.test(text);
+  }, 'Input including cache and reported cached tokens must be visible');
+  assert.doesNotMatch(await page.locator('body').innerText(), /estimat/i);
   await json(join(rows[0].dir, 'live.json'), {});
 
   const visibleFrame = async build => {
@@ -363,6 +367,9 @@ test('CLI uses the exact fresh run directory and rejects overwriting it', { time
     for await (const chunk of request) body += chunk;
     const input = JSON.parse(body || '{}');
     requests += 1;
+    // Seed our fixture so scoring exercises a real browser instead of failing on a missing game.
+    await mkdir(join(dir, 'workspace'), { recursive: true });
+    await writeFile(join(dir, 'workspace/index.html'), game('cli-scoring', { webgl: true }));
     const usage = { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 };
     if (input.stream) {
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -388,11 +395,36 @@ test('CLI uses the exact fresh run directory and rejects overwriting it', { time
     MOONSHOT_BASE_URL: `http://127.0.0.1:${provider.address().port}/v1` };
   const first = launch('npx', args, { env });
   t.after(() => stop(first));
+  const beforeScoringResult = await until(async () => {
+    const lines = (await readFile(join(dir, 'transcript.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    const end = lines.find(event => event.type === 'generation_end');
+    if (!end) return;
+    let resultWritten = false;
+    try { await readFile(join(dir, 'result.json')); resultWritten = true; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    return { end, resultWritten, running: first.child.exitCode === null && !first.child.signalCode };
+  }, 'Generation end must become readable before final browser scoring result', 75_000);
+  assert.equal(beforeScoringResult.resultWritten, false);
+  assert.equal(beforeScoringResult.running, true);
   await Promise.race([first.ended,
     timeout(75_000, undefined, { ref: false }).then(() => { throw new Error(`CLI did not finish: ${first.output()}`); })]);
   assert.ok(requests > 0, `CLI must use the local provider: ${first.output()}`);
   const original = await readFile(join(dir, 'result.json'), 'utf8');
-  assert.equal(JSON.parse(original).run_id, 'chosen-run-name');
+  const result = JSON.parse(original);
+  assert.equal(result.run_id, 'chosen-run-name');
+  const events = (await readFile(join(dir, 'transcript.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  const began = events.find(event => event.type === 'start');
+  const ended = events.find(event => event.type === 'generation_end');
+  assert.ok(began && ended, 'Real CLI must emit generation boundary events');
+  assert.equal(began.createdAt, result.created_at);
+  assert.equal(ended.createdAt, result.created_at);
+  assert.equal(ended.ts, result.generation_finished_at);
+  assert.equal(ended.ts, beforeScoringResult.end.ts);
+  assert.ok(Date.parse(ended.ts) >= Date.parse(began.ts));
+  assert.equal(ended.inputTokens, result.agent.tokens_in);
+  assert.equal(ended.outputTokens, result.agent.tokens_out);
+  assert.equal(ended.cachedInputTokens, result.agent.tokens_in_cached ?? 0);
+  assert.equal(ended.usagePartial, Boolean(result.agent.error || result.agent.budget_exhausted));
   const count = requests;
   const second = launch('npx', args, { env });
   t.after(() => stop(second));
@@ -402,4 +434,153 @@ test('CLI uses the exact fresh run directory and rejects overwriting it', { time
   assert.match(second.output(), /exist|fresh|overwrite/i);
   assert.equal(requests, count, 'Existing directory rejection must happen before model execution');
   assert.equal(await readFile(join(dir, 'result.json'), 'utf8'), original, 'Existing result must remain unchanged');
+});
+
+test('throughput uses a common engine wall clock, reported usage, and actual generation completion', { timeout: 30_000 }, async t => {
+  // Summed task rates, cache subtraction, scoring time, or character estimates misstate the benchmark.
+  const temp = await mkdtemp(join(tmpdir(), 'worldbuild-throughput-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const rows = engines.flatMap((engine, i) => ['arena-combat', 'racing'].map(task => ({
+    id: `${i}-${task}`, engine, task, dir: join(temp, `${i}-${task}`),
+  })));
+  const manifest = join(temp, 'manifest.json');
+  await json(manifest, { hardware: 'RTX 5090', runs: rows });
+  const dashboardPort = await port();
+  const server = launch(process.execPath, [join(project, 'experiments/racing-4w/dashboard.mjs'),
+    '--runs', manifest, '--port', String(dashboardPort)]);
+  t.after(() => stop(server));
+  const state = async (engine = engines[0]) => {
+    const response = await fetch(`http://127.0.0.1:${dashboardPort}/api/state?engine=${encodeURIComponent(engine)}`);
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const waiting = await until(() => state(), 'Throughput dashboard must start');
+  for (const value of [waiting.aggregate, ...waiting.runs]) {
+    assert.equal(value.inputTps, null);
+    assert.equal(value.outputTps, null);
+    assert.equal(value.throughputElapsedMs, null);
+    assert.equal(value.throughputTimeSource, 'unavailable');
+  }
+  const epoch = Date.now() - 30_000;
+  const stamp = seconds => new Date(epoch + seconds * 1000).toISOString();
+  const event = (type, seconds, fields = {}) => ({ type, agent: 'runner', depth: 0, ts: stamp(seconds), ...fields });
+  const writeEvents = async (row, events) => {
+    await mkdir(row.dir, { recursive: true });
+    await writeFile(join(row.dir, 'transcript.jsonl'), events.map(value => JSON.stringify(value)).join('\n') + '\n');
+  };
+  const responses = (agent, seconds, inputTokens, outputTokens, cachedInputTokens) =>
+    event('response', seconds, { agent, depth: agent === 'root' ? 0 : 1,
+      inputTokens, outputTokens, cachedInputTokens, toolCalls: [], stopReason: 'end_turn', text: 'done' });
+  const starts = [0, 2], ends = [10, 20], inputs = [1000, 2000], outputs = [100, 300], cached = [200, 500];
+  await writeEvents(rows[0], [
+    event('start', 0, { createdAt: stamp(0) }),
+    responses('root', 1, 100, 10, 20), responses('root/builder', 3, 900, 90, 180),
+    event('tool_call', 5, { agent: 'root', tool: 'check_modules', summary: 'tool time remains in wall clock' }),
+  ]);
+  await writeEvents(rows[1], [
+    event('start', 2, { createdAt: stamp(2) }), responses('root', 4, 2000, 300, 500),
+  ]);
+  await json(join(rows[0].dir, 'live.json'), Object.fromEntries(Array.from({ length: 10 }, (_, i) =>
+    [`root/live-${i}`, { firstTokenMs: 1, elapsedMs: 1000, reasoningChars: 9_000_000, contentChars: 9_000_000, toolArgChars: 9_000_000 }])));
+  const active = await until(async () => {
+    const value = await state();
+    return value.aggregate.inputTokens === 3000 && value;
+  }, 'Known response usage must appear while generation is active');
+  assert.equal(active.aggregate.outputTokens, 400);
+  assert.equal(active.aggregate.cachedInputTokens, 700);
+  assert.equal(active.aggregate.throughputProvisional, true);
+  assert.ok(active.aggregate.throughputElapsedMs >= 30_000);
+  assert.ok(Math.abs(active.aggregate.inputTps - 3000 * 1000 / active.aggregate.throughputElapsedMs) < 1e-6);
+  assert.ok(Math.abs(active.aggregate.outputTps - 400 * 1000 / active.aggregate.throughputElapsedMs) < 1e-6);
+  assert.ok(!JSON.stringify(active).includes('estimatedTps'), 'Character-estimated rates must be removed from the API');
+  for (let i = 0; i < 2; i++) {
+    await appendFile(join(rows[i].dir, 'transcript.jsonl'), JSON.stringify(event('generation_end', ends[i], {
+      createdAt: stamp(starts[i]), resumeCount: 0, inputTokens: inputs[i], outputTokens: outputs[i],
+      cachedInputTokens: cached[i], usagePartial: false,
+    })) + '\n');
+  }
+  const scored = await until(async () => {
+    const value = await state();
+    return value.aggregate.throughputElapsedMs === 20_000 && value;
+  }, 'Generation-end events must freeze throughput before scoring finishes');
+  const checkFinal = value => {
+    assert.equal(value.aggregate.inputTps, 150);
+    assert.equal(value.aggregate.outputTps, 20);
+    assert.equal(value.aggregate.cachedInputTokens, 700);
+    assert.equal(value.aggregate.throughputProvisional, false);
+    assert.equal(value.aggregate.throughputTimeSource, 'recorded');
+    for (let i = 0; i < 2; i++) {
+      const run = value.runs.find(run => run.id === rows[i].id);
+      assert.equal(run.inputTps, inputs[i] / 20);
+      assert.equal(run.outputTps, outputs[i] / 20);
+      assert.equal(run.throughputElapsedMs, 20_000);
+      assert.equal(run.generationStartedAt, epoch + starts[i] * 1000);
+      assert.equal(run.generationFinishedAt, epoch + ends[i] * 1000);
+    }
+  };
+  checkFinal(scored);
+  await delay(600);
+  checkFinal(await state());
+  for (let i = 0; i < 2; i++) {
+    await json(join(rows[i].dir, 'result.json'), {
+      created_at: stamp(starts[i]), generation_finished_at: stamp(ends[i]), wall_clock_s: ends[i] - starts[i],
+      agent: { tokens_in: inputs[i], tokens_out: outputs[i], tokens_in_cached: cached[i], error: null, budget_exhausted: null },
+      gate_error: null,
+    });
+  }
+  checkFinal(await until(async () => {
+    const value = await state();
+    return value.aggregate.completed && value;
+  }, 'Final results must preserve the recorded-generation rates'));
+  const isolated = await state(engines[1]);
+  assert.equal(isolated.aggregate.inputTokens, 0);
+  assert.equal(isolated.aggregate.cachedInputTokens, 0);
+  assert.equal(isolated.aggregate.inputTps, null);
+  await writeEvents(rows[2], [event('start', 0, { createdAt: stamp(0) })]);
+  const legacy = { created_at: stamp(0), wall_clock_s: 10,
+    agent: { tokens_in: 50, tokens_out: 10, error: null, budget_exhausted: null }, gate_error: null };
+  await json(join(rows[2].dir, 'result.json'), legacy);
+  const rounded = await until(async () => {
+    const value = await state(engines[1]);
+    return value.aggregate.throughputTimeSource === 'legacy-rounded' && value;
+  }, 'Unresumed old results must identify rounded timing');
+  assert.equal(rounded.aggregate.inputTps, 5);
+  assert.equal(rounded.aggregate.outputTps, 1);
+  assert.equal(rounded.aggregate.cachedInputTokens, 0);
+  assert.equal(rounded.aggregate.throughputProvisional, true, 'A future waiting task leaves the round provisional');
+  await appendFile(join(rows[2].dir, 'transcript.jsonl'), JSON.stringify(event('resume', 20, {
+    createdAt: stamp(0), resumeCount: 1, priorWallS: 10,
+  })) + '\n');
+  await json(join(rows[2].dir, 'result.json'), { ...legacy, wall_clock_s: 11, resumed: { count: 1 } });
+  const unavailable = await until(async () => {
+    const value = await state(engines[1]);
+    return value.aggregate.throughputTimeSource === 'unavailable' && value;
+  }, 'A resumed legacy final without recorded end must not fabricate elapsed wall time');
+  assert.equal(unavailable.aggregate.inputTps, null);
+  assert.equal(unavailable.aggregate.outputTps, null);
+  assert.equal(unavailable.aggregate.throughputElapsedMs, null);
+  assert.ok(unavailable.aggregate.throughputUnavailableReason);
+  await json(join(rows[2].dir, 'result.json'), {
+    ...legacy, wall_clock_s: 11, resumed: { count: 1 }, generation_finished_at: stamp(35),
+  });
+  const resumedWall = await until(async () => {
+    const value = await state(engines[1]);
+    return value.aggregate.throughputTimeSource === 'recorded' && value;
+  }, 'A recorded resumed end must recover actual wall timing');
+  assert.equal(resumedWall.aggregate.throughputElapsedMs, 35_000, 'Throughput wall time includes resume downtime');
+  assert.equal(resumedWall.aggregate.inputTps, 50 / 35);
+  assert.equal(resumedWall.aggregate.outputTps, 10 / 35);
+  const failedResult = JSON.parse(await readFile(join(rows[0].dir, 'result.json'), 'utf8'));
+  failedResult.agent.error = 'Provider stopped after recorded partial usage';
+  const failedEvents = (await readFile(join(rows[0].dir, 'transcript.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  failedEvents.find(event => event.type === 'generation_end').usagePartial = true;
+  await writeEvents(rows[0], failedEvents);
+  await json(join(rows[0].dir, 'result.json'), failedResult);
+  const partial = await until(async () => {
+    const value = await state();
+    return value.runs.some(run => run.status === 'failed') && value;
+  }, 'Failed generation remains visibly partial even after it terminates');
+  assert.equal(partial.aggregate.throughputProvisional, true);
+  assert.equal(partial.aggregate.inputTokens, 3000);
+  assert.equal(partial.aggregate.outputTokens, 400);
 });
