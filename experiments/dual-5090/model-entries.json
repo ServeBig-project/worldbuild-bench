@@ -12,6 +12,18 @@
     "vision": false
   },
   {
+    "id": "flash-next-nvfp4",
+    "name": "Flash-Next NVFP4 (BR)",
+    "provider": "openai",
+    "provider_model_id": "flash-next-nvfp4",
+    "base_url": "http://127.0.0.1:1919/v1",
+    "api_key_env": "WORLDBUILD_LOCAL_API_KEY",
+    "pricing": {"input_per_mtok": 0, "output_per_mtok": 0},
+    "max_output_tokens": 32768,
+    "stream": true,
+    "vision": false
+  },
+  {
     "id": "flash-next-strata-iq2",
     "name": "Flash-Next IQ2_XS (Strata)",
     "provider": "openai",
