@@ -18,6 +18,8 @@ this is not two separately limited containers.
   this pinned BR parser does not recognize.
   The CUDA 13 development installation must include `libcurand-dev-13-0`
   (10.4.0.35-1 here), needed when FlashInfer first compiles its sampling module.
+  The native FlashInfer launcher also exposes the existing CUDA wheel headers
+  through `CPATH`; its FP4 module needs `cublasLt.h` during compilation.
 - Strata: official `v0.2.1`, control `0.1.46.1`, CUDA 13 engine `0.1.46`;
   its bundled Python/libraries are independent of BR.
 - BR weights: the complete RadixArk Flash-Next NVFP4 checkpoint at revision

@@ -2,6 +2,7 @@
 set -euo pipefail
 export CUDA_HOME=/usr/local/cuda-13.0
 export CUDA_VISIBLE_DEVICES=0
+export CPATH="/opt/worldbuild/venvs/br/lib/python3.12/site-packages/nvidia/cu13/include${CPATH:+:$CPATH}"
 export PATH="/opt/worldbuild/venvs/br/bin:$CUDA_HOME/bin:$PATH"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MAX_JOBS=16
 export TORCH_CUDA_ARCH_LIST=12.0
