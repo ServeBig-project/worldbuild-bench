@@ -51,6 +51,7 @@ Commands:
       [--effort <tier>]            Reasoning effort low|medium|high|xhigh, sent
                                    via each provider's native control
                                    (default: provider default)
+      [--run-dir <dir>]            Fresh exact output directory (must not exist)
       [--quiet]                    Suppress per-turn console output
 
   resume <run-dir>                 Continue a run after budget exhaustion,
@@ -154,6 +155,7 @@ async function cmdRun(p: Parsed): Promise<void> {
   }
   await runBench({
     task: requireStr(p.flags, "task"),
+    runDir: p.flags["run-dir"] === undefined ? undefined : requireStr(p.flags, "run-dir"),
     model: requireStr(p.flags, "model"),
     maxUsd: optNum(p.flags, "budget-usd"),
     maxWallMins: optNum(p.flags, "budget-mins"),

@@ -30,7 +30,9 @@ export interface RunOptions {
   maxTokens?: number;
   effort?: "low" | "medium" | "high" | "xhigh";
   quiet?: boolean;
-  /** Override the runs/ output root (tests). */
+  /** Fresh exact output directory; must not exist. */
+  runDir?: string;
+  /** Override the runs/ output root. */
   runsDir?: string;
 }
 
@@ -689,14 +691,14 @@ export async function runBench(opts: RunOptions): Promise<{ runDir: string; resu
 
   const runsRoot = opts.runsDir ?? path.join(packageRoot(), "runs");
   const runId = runIdFor(opts.task, model.id);
-  const runDir = path.join(runsRoot, runId);
+  const runDir = opts.runDir ? path.resolve(opts.runDir) : path.join(runsRoot, runId);
   const workspace = path.join(runDir, "workspace");
-  fs.mkdirSync(runsRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(runDir), { recursive: true });
   try {
     fs.mkdirSync(runDir);
   } catch (e: any) {
     if (e?.code === "EEXIST") {
-      throw new Error(`run directory already exists: ${runDir}; wait a second and retry`);
+      throw new Error(`run directory already exists: ${runDir}; choose a fresh directory or resume the existing run`);
     }
     throw e;
   }
