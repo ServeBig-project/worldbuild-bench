@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export CUDA_HOME=/usr/local/cuda-13.0
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=GPU-906881ea-79c1-68e8-49ec-5336048e604a
 export PATH="/opt/worldbuild/venvs/br/bin:$CUDA_HOME/bin:$PATH"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 MAX_JOBS=16
 export TORCH_CUDA_ARCH_LIST=12.0
 cd /opt/worldbuild/bigrabbit-8eb07829
 exec taskset -c 32-61,160-189 /opt/worldbuild/venvs/br/bin/ft serve \
-  --host 127.0.0.1 --port 1919 --gpu 1 \
+  --host 127.0.0.1 --port 1919 --gpu GPU-906881ea-79c1-68e8-49ec-5336048e604a \
   --model /opt/worldbuild/models/base \
   --nowag-expert-path /opt/worldbuild/models/paper2 \
   --served-model-name flash-next-paper2 \
