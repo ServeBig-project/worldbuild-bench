@@ -18,10 +18,10 @@ The same model reports 115654664 bytes of active state per request: twelve activ
 
 ## Kernel selection
 
-`--moe-backend offload --nvfp4-backend flashinfer` explicitly selects FlashInfer SM12x W4A16 expert execution and its packed expert layout. CPU/hybrid expert execution uses a different layout and is not requested. The explicit FlashInfer selection raises an error if unavailable rather than silently selecting Triton. BR documents forcing this backend for batched throughput on small-intermediate models; this is not a measured speed guarantee.
+`--moe-backend hybrid --nvfp4-backend triton` follows the user's final choice: CPU and GPU both execute routed experts, retaining native ModelOpt expert rows. GPU expert execution uses the compatible Triton implementation; the FlashInfer packed layout is not requested. This is an explicit hybrid configuration, not automatic backend selection.
 
 Autoregressive generation is retained: speculative MTP is not enabled. No parameter sweep or speed-based candidate selection is part of this deployment.
 
-## Pre-start compatibility evidence
+## Startup validation
 
-On the installed FlashInfer 0.6.18.post1 and CUDA 13 environment, the explicit backend selector resolves to `b12x` on GPU 0. All imported preparation and launch symbols are present with compatible signatures. The checkpoint has scalar down-projection global scales for all 24576 routed experts; its 2560 hidden and 640 intermediate dimensions satisfy the backend packing alignment. This checks availability and format constraints, not full generation correctness, which must be established through the service after startup.
+The installed native extensions and CUDA 13 environment remain unchanged. The checkpoint's 2560 hidden and 640 intermediate dimensions satisfy the native packing alignment. Actual hybrid placement, memory use and generation correctness must be verified through the service after startup.

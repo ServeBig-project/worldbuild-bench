@@ -11,7 +11,7 @@ exec taskset -c 0-29,128-157 /opt/worldbuild/venvs/br/bin/ft serve \
   --model /opt/worldbuild/models/base \
   --served-model-name flash-next-nvfp4 \
   --max-seq-len-override 262144 --max-running-requests 12 \
-  --moe-cpu-threads 30 --moe-backend offload --nvfp4-backend flashinfer --moe-cache-auto \
+  --moe-cpu-threads 30 --moe-backend hybrid --nvfp4-backend triton --moe-cache-auto \
   --dense-quant fp8 --embedding-placement host \
   --kv-dtype int8 --kv-placement tiered \
   --runtime-cache-gib 4 --prefix-cache-host-gib 36 \
