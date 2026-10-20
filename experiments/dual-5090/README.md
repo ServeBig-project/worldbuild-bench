@@ -10,6 +10,10 @@ this is not two separately limited containers.
 - Benchmark: `54d2a4f`, including two parallel builder phases and shared-wall rates.
 - BR: `ServeBig-project/Big-Rabbit@36908c15`, installed separately under
   `/opt/worldbuild/venvs/br` with CUDA 13.0 and Torch 2.11.0+cu130.
+  Apply [br-constraints.txt](br-constraints.txt) when installing BR dependencies:
+  Transformers 5.15.1 and tokenizers 0.22.2 preserve its existing raw-config path.
+  Transformers 5.20.2 rewrites full-attention layers to `indexed_attention`, which
+  this pinned BR parser does not recognize.
 - Strata: official `v0.2.1`, control `0.1.46.1`, CUDA 13 engine `0.1.46`;
   its bundled Python/libraries are independent of BR.
 - BR weights: existing Paper2 expert sidecar plus RadixArk Flash-Next base
