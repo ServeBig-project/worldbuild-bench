@@ -24,4 +24,6 @@ Autoregressive generation is retained: speculative MTP is not enabled. No parame
 
 ## Startup validation
 
-The installed native extensions and CUDA 13 environment remain unchanged. The checkpoint's 2560 hidden and 640 intermediate dimensions satisfy the native packing alignment. Actual hybrid placement, memory use and generation correctness must be verified through the service after startup.
+The installed native extensions and CUDA 13 environment remain unchanged. The checkpoint's 2560 hidden and 640 intermediate dimensions satisfy the native packing alignment. Public service checks confirmed native NVFP4, hybrid, INT8 tiered KV, 7317 GPU expert slots (18.89 GiB), 36 GiB allocated host cache and 3.83 GiB usable runtime. Startup process-tree PSS measured 146.74 GiB. Independently authored normal/tool and two concurrent 16407-token input probes passed.
+
+The NVFP4 bandwidth profile was absent, so the automatic fetch split uses its documented fixed cap of 1; the public fraction is null. No calibration was run. This is tracked in [BR issue #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56).

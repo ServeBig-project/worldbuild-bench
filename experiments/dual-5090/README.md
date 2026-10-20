@@ -20,10 +20,10 @@ this is not two separately limited containers.
   (10.4.0.35-1 here), needed when FlashInfer first compiles its sampling module.
 - Strata: official `v0.2.1`, control `0.1.46.1`, CUDA 13 engine `0.1.46`;
   its bundled Python/libraries are independent of BR.
-- BR weights: existing Paper2 expert sidecar plus RadixArk Flash-Next base
-  revision `7b719225242aacd3dbd3f9407468c2ee9a9d2594`.
-  Only non-target-expert base shards are required alongside the sidecar.
-  This base directory is not a standalone NVFP4 deployment.
+- BR weights: the complete RadixArk Flash-Next NVFP4 checkpoint at revision
+  `7b719225242aacd3dbd3f9407468c2ee9a9d2594`, including all 192 expert shards.
+  The current launcher is `start-br-fp4.sh`; Paper2's launcher and stopped run
+  remain available as historical records.
 - Strata weights: existing ISTA-DASLab Flash-Next GSQ-RCO IQ2_XS shards,
   revision `ed59f92082b1e93c0e96d60a8b11aab089b52f09`, with the matching prepared
   native pack/tokenizer and MTP data.
@@ -38,14 +38,15 @@ SMT siblings. They must be revised for a different host.
 |---|---|---|---|
 | BR | 0 | `0-29,128-157` | localhost:1919 |
 | Strata | 1 | `32-61,160-189` | localhost:18080 |
-| BR benchmark | software rendering | `64-67,192-195` | `runs/paper2/` |
+| BR benchmark | software rendering | `64-67,192-195` | `runs/fp4/` |
 | Strata benchmark | software rendering | `68-71,196-199` | `runs/strata/` |
 | Dashboard | none | `72-73,200-201` | localhost:8090 |
 
 The user requested documented performance settings, not a tuning sweep:
 
-- BR: FP8 dense, INT8 KV, host embeddings, automatic MoE/cache/attention/batching,
-  2 GiB shared runtime, tiered KV with 8 GiB host cache, AR without MTP,
+- BR: native NVFP4 experts, FP8 dense, INT8 KV, host embeddings, explicit hybrid
+  CPU/GPU execution with Triton kernels, automatic cache/attention/batching,
+  4 GiB shared runtime, tiered KV with 36 GiB host cache, AR without MTP,
   at most 12 admitted requests subject to actual resource availability.
 - Strata: INT8 KV, automatic expert cache/prefill/CPU worker selection,
   32K resident KV window, 4 concurrent slots, MTP with `spec=4` and `batch-mtp`.
@@ -58,19 +59,25 @@ Strata choices follow its [batching](https://github.com/Niko1221/Strata/blob/v0.
 and [configuration](https://github.com/Niko1221/Strata/blob/v0.2.1/docs/DETAILS.md)
 documentation. No measured optimum is claimed.
 
-Deployment acceptance passed: independent routing/workspace/graph checks, streamed
-text and tool calls, and two concurrent requests with 16407 input tokens each.
-Automatic BR preparation skipped the 384/1024-row prefill measurements for
-temporary-memory capacity; those sizes retain existing defaults. The long-request
-acceptance exercised serving after that decision. On this 5090, calls above 128
-rows use the generic Triton expert implementation; decode batches 1–8 use measured
-custom CUDA kernels with graph replay. This coverage gap is tracked in
-[BR issue #55](https://github.com/ServeBig-project/Big-Rabbit/issues/55).
+The host-memory plan allows 160 GiB per engine and leaves approximately 22 GiB
+for shared overhead. These are planning allowances, not enforced container limits.
+The native BR capacity calculation is in [br-fp4-resources.md](br-fp4-resources.md).
+
+The Paper2 run was stopped at the user's request; its results and deployment
+snapshot remain under `runs/paper2/`. Its NoWAG optimization-coverage issue
+[BR #55](https://github.com/ServeBig-project/Big-Rabbit/issues/55) concerns that
+archived configuration. Native NVFP4 passed normal streaming, tool calls and two
+concurrent requests with 16407 input tokens each; both tasks have started. Strata
+finished both tasks successfully and its inference service was stopped at the user's request.
+
+The current native hybrid run uses the documented fixed fetch-cap fallback because
+its NVFP4 bandwidth profile is absent; no calibration or tuning sweep was performed.
+This initialization gap is recorded in [BR #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56).
 
 ## Operate
 
 Place the JSON files under `/opt/worldbuild/config/`, shell launchers directly
-under `/opt/worldbuild/`, and register `supervisor.conf`. Merge the two entries
+under `/opt/worldbuild/`, and register `supervisor.conf`. Merge the entries
 from `model-entries.json` into the benchmark's registry. Only the dashboard
 starts automatically; inference and benchmark groups require an explicit start.
 
@@ -86,7 +93,9 @@ supervisorctl start worldbuild-strata
 Each engine can start as soon as its inputs are ready. Check the serving model,
 effective INT8 KV, actual GPU process placement and CPU thread affinity. Run
 the independently authored deployment probe against the ready engine. After it
-passes, start that engine's benchmark without waiting for the other engine:
+passes, start that engine's benchmark without waiting for the other engine.
+For BR, run `python3 /opt/worldbuild/deployment_probe.py --engine br --br-model flash-next-nvfp4`,
+then the same command with `--long-prompts`. Start the accepted benchmark:
 
 ```bash
 supervisorctl start worldbuild-bench-br
