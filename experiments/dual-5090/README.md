@@ -76,8 +76,11 @@ measured concurrent CPU expert bandwidth of 62.3 GB/s and PCIe bandwidth of
 21.6 GB/s on BR's assigned cores. The restarted service reports a hybrid GPU
 fetch fraction of `0.2578953641`; the fresh round writes to `runs/fp4-initialized/`.
 This is one standard initialization, not a parameter sweep or a measured model
-speedup. The missing automatic initialization for explicit hybrid remains tracked
-in [BR #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56).
+speedup. [BR PR #43](https://github.com/ServeBig-project/Big-Rabbit/pull/43) automatically
+measures only with `--moe-backend auto`; explicit hybrid intentionally does not
+measure. The first deployment omitted this preparation step.
+[BR #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56) was withdrawn
+as a defect report after confirming that documented contract.
 
 ## Operate
 
