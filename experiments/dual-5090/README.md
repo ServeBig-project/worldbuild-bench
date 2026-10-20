@@ -14,6 +14,8 @@ this is not two separately limited containers.
   Transformers 5.15.1 and tokenizers 0.22.2 preserve its existing raw-config path.
   Transformers 5.20.2 rewrites full-attention layers to `indexed_attention`, which
   this pinned BR parser does not recognize.
+  The CUDA 13 development installation must include `libcurand-dev-13-0`
+  (10.4.0.35-1 here), needed when FlashInfer first compiles its sampling module.
 - Strata: official `v0.2.1`, control `0.1.46.1`, CUDA 13 engine `0.1.46`;
   its bundled Python/libraries are independent of BR.
 - BR weights: existing Paper2 expert sidecar plus RadixArk Flash-Next base
