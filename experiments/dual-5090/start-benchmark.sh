@@ -4,8 +4,9 @@ set -eo pipefail
 case "$1" in
   paper2) model=flash-next-paper2; label="BR Paper2"; cpus=64-67,192-195 ;;
   fp4|fp4-initialized) model=flash-next-nvfp4; label="BR NVFP4"; cpus=64-67,192-195 ;;
+  fp4-flashinfer) model=flash-next-nvfp4; label="BR NVFP4 FlashInfer"; cpus=64-67,192-195 ;;
   strata) model=flash-next-strata-iq2; label="Strata IQ2_XS"; cpus=68-71,196-199 ;;
-  *) echo "usage: $0 paper2|fp4|fp4-initialized|strata" >&2; exit 2 ;;
+  *) echo "usage: $0 paper2|fp4|fp4-initialized|fp4-flashinfer|strata" >&2; exit 2 ;;
 esac
 export WORLDBUILD_LOCAL_API_KEY=local CUDA_VISIBLE_DEVICES="" LIBGL_ALWAYS_SOFTWARE=1
 cd /opt/worldbuild/benchmark

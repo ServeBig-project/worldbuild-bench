@@ -18,11 +18,11 @@ The same model reports 115654664 bytes of active state per request: twelve activ
 
 ## Kernel selection
 
-`--moe-backend hybrid --nvfp4-backend triton` follows the user's final choice: CPU and GPU both execute routed experts, retaining native ModelOpt expert rows. GPU expert execution uses the compatible Triton implementation; the FlashInfer packed layout is not requested. This is an explicit hybrid configuration, not automatic backend selection.
+The current trial uses `--moe-backend offload --nvfp4-backend flashinfer` at the user's request. FlashInfer repacks native NVFP4 expert weights for its SM12x GPU kernels; the CPU stores weights but does not compute experts. The preceding hybrid + Triton run is preserved under `runs/fp4-initialized/`. GPU assignment, CPU affinity, context, INT8 KV and cache budgets are unchanged.
 
 Autoregressive generation is retained: speculative MTP is not enabled. No parameter sweep or speed-based candidate selection is part of this deployment.
 
-## Startup validation
+## Previous hybrid startup validation
 
 The installed native extensions and CUDA 13 environment remain unchanged. The checkpoint's 2560 hidden and 640 intermediate dimensions satisfy the native packing alignment. Public service checks confirmed native NVFP4, hybrid, INT8 tiered KV, 7316 GPU expert slots (18.89 GiB), 36 GiB allocated host cache and 3.83 GiB usable runtime. The first native instance measured 146.74 GiB process-tree PSS. Independently authored normal/tool and two concurrent 16407-token input probes passed.
 

@@ -38,16 +38,17 @@ SMT siblings. They must be revised for a different host.
 |---|---|---|---|
 | BR | 0 | `0-29,128-157` | localhost:1919 |
 | Strata | 1 | `32-61,160-189` | localhost:18080 |
-| BR benchmark | software rendering | `64-67,192-195` | `runs/fp4-initialized/` |
+| BR benchmark | software rendering | `64-67,192-195` | `runs/fp4-flashinfer/` |
 | Strata benchmark | software rendering | `68-71,196-199` | `runs/strata/` |
 | Dashboard | none | `72-73,200-201` | localhost:8090 |
 
 The user requested documented performance settings, not a tuning sweep:
 
-- BR: native NVFP4 experts, FP8 dense, INT8 KV, host embeddings, explicit hybrid
-  CPU/GPU execution with Triton kernels, automatic cache/attention/batching,
+- BR: native NVFP4 experts, FP8 dense, INT8 KV, host embeddings, explicit offload
+  execution with FlashInfer kernels, automatic cache/attention/batching,
   4 GiB shared runtime, tiered KV with 36 GiB host cache, AR without MTP,
-  at most 12 admitted requests subject to actual resource availability.
+  at most 12 admitted requests subject to actual resource availability. CPU stores
+  expert weights; the GPU computes experts. The preceding hybrid run is preserved.
 - Strata: INT8 KV, automatic expert cache/prefill/CPU worker selection,
   32K resident KV window, 4 concurrent slots, MTP with `spec=4` and `batch-mtp`.
   Additional builder requests queue normally.
@@ -81,6 +82,11 @@ measures only with `--moe-backend auto`; explicit hybrid intentionally does not
 measure. The first deployment omitted this preparation step.
 [BR #56](https://github.com/ServeBig-project/Big-Rabbit/issues/56) was withdrawn
 as a defect report after confirming that documented contract.
+
+The user subsequently requested a FlashInfer trial. The current launcher selects
+`--moe-backend offload --nvfp4-backend flashinfer`, keeping the GPU, CPU affinity,
+KV precision and cache budgets. The initialized hybrid run is stopped and retained
+under `runs/fp4-initialized/`; the FlashInfer round uses `runs/fp4-flashinfer/`.
 
 ## Operate
 
