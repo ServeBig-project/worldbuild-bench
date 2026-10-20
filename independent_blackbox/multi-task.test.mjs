@@ -7,6 +7,8 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { createServer as httpServer } from 'node:http';
+import { setTimeout as timeout } from 'node:timers/promises';
 
 const project = resolve(process.env.WB_TEST_ROOT ?? '');
 assert.ok(process.env.WB_TEST_ROOT, 'Set WB_TEST_ROOT to the production checkout');
@@ -349,4 +351,55 @@ setInterval(()=>{},1000);
     assert.equal(outcomes[task].error, null);
     assert.equal(resolve(outcomes[task].result), join(successOut, task, 'result.json'));
   }
+});
+
+test('CLI uses the exact fresh run directory and rejects overwriting it', { timeout: 100_000 }, async t => {
+  // The runner's real CLI option must preserve the requested directory and refuse data loss.
+  const temp = await mkdtemp(join(tmpdir(), 'worldbuild-cli-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  let requests = 0;
+  const provider = httpServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const input = JSON.parse(body || '{}');
+    requests += 1;
+    const usage = { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 };
+    if (input.stream) {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      for (const chunk of [
+        { choices: [{ index: 0, delta: { role: 'assistant', content: 'done' }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage },
+      ]) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      response.end('data: [DONE]\n\n');
+    } else {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({
+        choices: [{ index: 0, message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }], usage,
+      }));
+    }
+  });
+  provider.listen(0, '127.0.0.1');
+  await once(provider, 'listening');
+  t.after(() => new Promise(resolve => provider.close(resolve)));
+  const dir = join(temp, 'chosen-run-name');
+  const args = ['--no-install', 'tsx', 'src/cli.ts', 'run', '--task', 'arena-combat',
+    '--model', 'kimi-k3', '--run-dir', dir, '--budget-mins', '1', '--max-turns', '1'];
+  const env = { ...process.env, MOONSHOT_API_KEY: 'test',
+    MOONSHOT_BASE_URL: `http://127.0.0.1:${provider.address().port}/v1` };
+  const first = launch('npx', args, { env });
+  t.after(() => stop(first));
+  await Promise.race([first.ended,
+    timeout(75_000, undefined, { ref: false }).then(() => { throw new Error(`CLI did not finish: ${first.output()}`); })]);
+  assert.ok(requests > 0, `CLI must use the local provider: ${first.output()}`);
+  const original = await readFile(join(dir, 'result.json'), 'utf8');
+  assert.equal(JSON.parse(original).run_id, 'chosen-run-name');
+  const count = requests;
+  const second = launch('npx', args, { env });
+  t.after(() => stop(second));
+  const rejected = await Promise.race([second.ended,
+    timeout(10_000, undefined, { ref: false }).then(() => { throw new Error('Existing run directory was not rejected promptly'); })]);
+  assert.notEqual(rejected.code, 0);
+  assert.match(second.output(), /exist|fresh|overwrite/i);
+  assert.equal(requests, count, 'Existing directory rejection must happen before model execution');
+  assert.equal(await readFile(join(dir, 'result.json'), 'utf8'), original, 'Existing result must remain unchanged');
 });
