@@ -1,0 +1,27 @@
+# Native NVFP4 deployment
+
+Use `start-br-fp4.sh` with the complete native checkpoint at `/opt/worldbuild/models/base`. The served model is `flash-next-nvfp4`; the previous Paper2 launcher remains a separate record. Runtime source remains `e72d8b32`, with the existing CUDA 13 environment and Transformers 5.15.1 constraint.
+
+## Approved allocation
+
+- GPU 0: one RTX 5090; GPU 1 remains assigned to Strata.
+- CPU: cores `0-29,128-157` (30 physical cores and their siblings), 30 MoE CPU threads, nested OpenMP/MKL pools limited to one thread.
+- Host RAM: 160 GiB planning allowance per engine from 342 GiB total, leaving 22 GiB for shared services and overhead. This is a soft allowance, not a container-enforced process limit.
+- GPU runtime cache: 4 GiB; host prefix cache: 36 GiB. Remaining GPU expert cache uses the existing automatic planner and default memory ratio.
+- At most 12 running requests, native 262144-token context limit; INT8 tiered KV, FP8 dense weights, host embeddings. These limits do not promise twelve simultaneous maximum-length contexts.
+
+## Capacity basis
+
+Native checkpoint tensor headers account for 63.282 GiB of routed experts and 47.684 GiB of PLE weights. The previous Paper2 process measured about 90 GiB PSS, including 28.916 GiB of routed experts and an 8 GiB host cache. Substituting native experts and a 36 GiB host cache gives an approximate 152.4 GiB process footprint. The largest three expert shards total 0.989 GiB, leaving approximately 6.6 GiB beneath the soft allowance during parallel loading. This is a planning estimate; actual native startup memory must be observed.
+
+The same model reports 115654664 bytes of active state per request: twelve active states plus one prefix checkpoint each total approximately 2.585 GiB. A 4 GiB runtime allocation leaves approximately 1.4 GiB for other cache metadata, hot KV and graph/block overhead; the runtime determines actual admission capacity.
+
+## Kernel selection
+
+`--moe-backend offload --nvfp4-backend flashinfer` explicitly selects FlashInfer SM12x W4A16 expert execution and its packed expert layout. CPU/hybrid expert execution uses a different layout and is not requested. The explicit FlashInfer selection raises an error if unavailable rather than silently selecting Triton. BR documents forcing this backend for batched throughput on small-intermediate models; this is not a measured speed guarantee.
+
+Autoregressive generation is retained: speculative MTP is not enabled. No parameter sweep or speed-based candidate selection is part of this deployment.
+
+## Pre-start compatibility evidence
+
+On the installed FlashInfer 0.6.18.post1 and CUDA 13 environment, the explicit backend selector resolves to `b12x` on GPU 0. All imported preparation and launch symbols are present with compatible signatures. The checkpoint has scalar down-projection global scales for all 24576 routed experts; its 2560 hidden and 640 intermediate dimensions satisfy the backend packing alignment. This checks availability and format constraints, not full generation correctness, which must be established through the service after startup.
