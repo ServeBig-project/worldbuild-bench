@@ -90,11 +90,15 @@ function game(build, { broken = false, webgl = false } = {}) {
 <style>html,body{margin:0;background:#15283b}canvas{display:block;width:100vw;height:100vh}</style></head>
 <body data-build="${build}"><canvas width="320" height="200"></canvas><script>
 const canvas=document.querySelector('canvas');
-${webgl ? `const gl=canvas.getContext('webgl');gl.clearColor(.1,.2,.3,1);gl.clear(gl.COLOR_BUFFER_BIT);
-gl.enable(gl.SCISSOR_TEST);gl.scissor(40,40,120,100);gl.clearColor(.9,.2,.1,1);gl.clear(gl.COLOR_BUFFER_BIT);`
-    : `const ctx=canvas.getContext('2d');ctx.fillStyle='#153754';ctx.fillRect(0,0,320,200);
-ctx.fillStyle='#ffd23f';ctx.fillRect(60,50,110,90);`}
 let x=0;addEventListener('keydown',e=>{if(e.key==='ArrowRight')x+=1});
+${webgl ? `const gl=canvas.getContext('webgl');
+function render(){gl.disable(gl.SCISSOR_TEST);gl.clearColor(.1,.2,.3,1);gl.clear(gl.COLOR_BUFFER_BIT);
+gl.enable(gl.SCISSOR_TEST);gl.scissor(40+x,40,120,100);gl.clearColor(.9,.2,.1,1);gl.clear(gl.COLOR_BUFFER_BIT);
+requestAnimationFrame(render);}`
+    : `const ctx=canvas.getContext('2d');
+function render(){ctx.fillStyle='#153754';ctx.fillRect(0,0,320,200);
+ctx.fillStyle='#ffd23f';ctx.fillRect(60+x,50,110,90);requestAnimationFrame(render);}`}
+requestAnimationFrame(render);
 window.__bench={getState:()=>({x,playing:true}),reset:()=>{x=0},
 getPlayerPosition:()=>({x,y:0,z:0}),getCameraInfo:()=>({position:{x:0,y:3,z:8}}),
 getEntities:()=>[{id:'player',position:{x,y:0,z:0}}],
