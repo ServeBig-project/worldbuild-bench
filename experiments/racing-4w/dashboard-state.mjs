@@ -50,12 +50,20 @@ function gameVersion(dir) {
 
 export function summarizeRun(run, now) {
   const agents = new Map(), feed = [];
-  let t0 = null, failedAt = null, resume = null, inputTokens = 0, outputTokens = 0;
+  let t0 = null, failedAt = null, resume = null, generationEnd = null, usagePartial = false;
+  let inputTokens = 0, outputTokens = 0, cachedInputTokens = 0;
   for (const event of readTranscript(run.dir)) {
     const ts = Date.parse(event.ts);
     if (event.type === "request" && t0 === null) t0 = ts;
+    if (["error", "budget"].includes(event.type)) usagePartial = true;
     if (event.agent === "runner") {
-      if (event.type === "resume") { failedAt = null; resume = { ...event, ts }; }
+      if (event.createdAt) t0 = Date.parse(event.createdAt);
+      if (event.type === "resume") { failedAt = null; generationEnd = null; resume = { ...event, ts }; }
+      if (event.type === "generation_end") {
+        generationEnd = { ...event, ts };
+        inputTokens = event.inputTokens; outputTokens = event.outputTokens; cachedInputTokens = event.cachedInputTokens ?? 0;
+        usagePartial ||= Boolean(event.usagePartial);
+      }
       if (event.type === "error") failedAt = ts;
     } else {
       const a = agents.get(event.agent) ?? { agent: event.agent, depth: event.depth, turns: 0, out: 0, inp: 0, status: "idle", tool: "", done: false };
@@ -67,6 +75,7 @@ export function summarizeRun(run, now) {
       if (event.type === "response") {
         a.out += event.outputTokens ?? 0; a.inp += event.inputTokens ?? 0;
         outputTokens += event.outputTokens ?? 0; inputTokens += event.inputTokens ?? 0;
+        cachedInputTokens += event.cachedInputTokens ?? 0;
         const calls = event.toolCalls ?? [];
         const cut = event.stopReason === "max_tokens" && !calls.length;
         a.done = !calls.length && !cut;
@@ -90,6 +99,18 @@ export function summarizeRun(run, now) {
     t0 = Date.parse(result.created_at);
     inputTokens = result.agent?.tokens_in ?? inputTokens;
     outputTokens = result.agent?.tokens_out ?? outputTokens;
+    cachedInputTokens = result.agent?.tokens_in_cached ?? cachedInputTokens;
+  }
+  let generationFinishedAt = generationEnd?.ts ?? failedAt, throughputTimeSource = "recorded", throughputUnavailableReason = null;
+  if (result) {
+    if (result.generation_finished_at) generationFinishedAt = Date.parse(result.generation_finished_at);
+    else if (failedAt !== null) generationFinishedAt = failedAt;
+    else if ((generationEnd?.resumeCount ?? -1) !== (result.resumed?.count ?? 0)) {
+      if (result.resumed?.count || resume) {
+        generationFinishedAt = null; throughputTimeSource = "unavailable";
+        throughputUnavailableReason = "resumed historical run has no recorded generation end";
+      } else { generationFinishedAt = t0 + result.wall_clock_s * 1000; throughputTimeSource = "legacy-rounded"; }
+    }
   }
   const elapsedMs = resumed ? (resume.priorWallS ?? savedResult?.wall_clock_s ?? 0) * 1000 + Math.max(0, (failedAt ?? now) - resume.ts)
     : result ? result.wall_clock_s * 1000 : t0 === null ? 0 : Math.max(0, (failedAt ?? now) - t0);
@@ -98,30 +119,44 @@ export function summarizeRun(run, now) {
   const status = finishedAt !== null ? (failed ? "failed" : "finished") : t0 !== null ? "running" : "waiting";
   const root = [...agents.values()].find((a) => a.depth === 0) ?? null;
   const builders = [...agents.values()].filter((a) => a.depth > 0);
-  const live = finishedAt === null ? readJson(path.join(run.dir, "live.json")) : {};
-  let running = 0, queue = 0, estimatedTps = 0;
+  const live = finishedAt === null && generationFinishedAt === null ? readJson(path.join(run.dir, "live.json")) : {};
+  let running = 0, queue = 0;
   for (const a of agents.values()) if (live[a.agent]) a.live = live[a.agent];
   for (const call of Object.values(live)) {
     if (call.firstTokenMs == null) { queue++; continue; }
     running++;
-    estimatedTps += ((call.reasoningChars || 0) + (call.contentChars || 0) + (call.toolArgChars || 0)) / 4 / Math.max(0.5, (call.elapsedMs - call.firstTokenMs) / 1000);
   }
-  const phase = status === "waiting" ? "waiting for run" : finishedAt !== null ? status : root?.done ? "scoring" : builders.length ? (builders.every((a) => a.done) ? "integration / repair" : "parallel module work") : "planning / entry wiring";
+  const phase = status === "waiting" ? "waiting for run" : finishedAt !== null ? status : generationEnd || root?.done ? "scoring" : builders.length ? (builders.every((a) => a.done) ? "integration / repair" : "parallel module work") : "planning / entry wiring";
   return {
     ...run, status, phase, t0, finishedAt, elapsedMs,
-    inputTokens, outputTokens, root, builders, feed: feed.slice(-40).reverse(),
-    live: { running, queue, estimatedTps }, game: { ...gameVersion(run.dir), url: `/game/${encodeURIComponent(run.id)}/index.html` },
+    inputTokens, outputTokens, cachedInputTokens, root, builders, feed: feed.slice(-40).reverse(),
+    generationStartedAt: t0, generationFinishedAt, throughputTimeSource, throughputUnavailableReason,
+    throughputProvisional: generationFinishedAt === null || failed || usagePartial,
+    live: { running, queue }, game: { ...gameVersion(run.dir), url: `/game/${encodeURIComponent(run.id)}/index.html` },
   };
 }
 
-export function aggregateRuns(runs) {
+export function aggregateRuns(runs, now) {
   const started = runs.map((r) => r.t0).filter((t) => t !== null);
   const completed = runs.length > 0 && runs.every((r) => r.finishedAt !== null);
   const running = runs.reduce((n, r) => n + r.live.running, 0), queue = runs.reduce((n, r) => n + r.live.queue, 0);
+  const active = runs.filter((r) => r.generationStartedAt !== null);
+  const unavailable = runs.find((r) => r.throughputUnavailableReason);
+  const throughputElapsedMs = !active.length || unavailable ? null : Math.max(0,
+    Math.max(...active.map((r) => r.generationFinishedAt ?? now)) - Math.min(...active.map((r) => r.generationStartedAt)));
+  const timing = {
+    throughputElapsedMs, throughputProvisional: runs.some((r) => r.throughputProvisional),
+    throughputTimeSource: unavailable || !active.length ? "unavailable" : runs.some((r) => r.throughputTimeSource === "legacy-rounded") ? "legacy-rounded" : "recorded",
+    throughputUnavailableReason: unavailable?.throughputUnavailableReason ?? (!active.length ? "waiting for first run" : throughputElapsedMs === 0 ? "interval has not elapsed" : null),
+  };
+  const rates = (r) => ({ ...timing, inputTps: throughputElapsedMs > 0 ? r.inputTokens * 1000 / throughputElapsedMs : null,
+    outputTps: throughputElapsedMs > 0 ? r.outputTokens * 1000 / throughputElapsedMs : null });
+  for (const run of runs) Object.assign(run, rates(run));
+  const totals = { inputTokens: runs.reduce((n, r) => n + r.inputTokens, 0), outputTokens: runs.reduce((n, r) => n + r.outputTokens, 0),
+    cachedInputTokens: runs.reduce((n, r) => n + r.cachedInputTokens, 0) };
   return {
     activeRequests: running + queue, running, queue,
-    inputTokens: runs.reduce((n, r) => n + r.inputTokens, 0), outputTokens: runs.reduce((n, r) => n + r.outputTokens, 0),
-    estimatedTps: runs.reduce((n, r) => n + r.live.estimatedTps, 0), completed,
+    ...totals, ...rates(totals), completed,
     elapsedMs: started.length ? Math.max(0, Math.max(...runs.filter((r) => r.t0 !== null).map((r) => r.t0 + r.elapsedMs)) - Math.min(...started)) : 0,
   };
 }

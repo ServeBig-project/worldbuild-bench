@@ -40,6 +40,8 @@ export interface RunResultJson {
   schema: 1;
   run_id: string;
   created_at: string;
+  /** Exact end of generation, before browser scoring; absent on older runs. */
+  generation_finished_at?: string;
   task: string;
   model: {
     id: string;
@@ -721,6 +723,7 @@ export async function runBench(opts: RunOptions): Promise<{ runDir: string; resu
     const transcript = new Transcript(path.join(runDir, "transcript.jsonl"), opts.quiet ?? false);
     const started = Date.now();
     const createdAt = new Date(started).toISOString();
+    transcript.log("start", "runner", 0, { createdAt });
 
     console.log(`run ${runId}`);
     console.log(
@@ -785,9 +788,8 @@ export async function runBench(opts: RunOptions): Promise<{ runDir: string; resu
         runtimeState = agent.snapshotRuntimeState();
       }
     }
-    transcript.close();
-
     return await finalizeRun({
+      transcript,
       runDir,
       runId,
       createdAt,
@@ -808,6 +810,7 @@ export async function runBench(opts: RunOptions): Promise<{ runDir: string; resu
 }
 
 interface FinalizeParams {
+  transcript: Transcript;
   runDir: string;
   runId: string;
   createdAt: string;
@@ -829,12 +832,19 @@ interface FinalizeParams {
 /** Settle accounting, score gates, write result.json, print the summary. */
 async function finalizeRun(p: FinalizeParams): Promise<{ runDir: string; result: RunResultJson }> {
   const { runDir, model, stats } = p;
+  const finished = Date.now(), finishedAt = new Date(finished).toISOString();
+  p.transcript.log("generation_end", "runner", 0, {
+    ts: finishedAt, createdAt: p.createdAt, resumeCount: p.resumed?.count ?? 0,
+    inputTokens: stats.inputTokens, outputTokens: stats.outputTokens, cachedInputTokens: stats.cachedInputTokens,
+    usagePartial: Boolean(p.agentError || stats.budgetExhausted),
+  });
+  p.transcript.close();
   const workspace = path.join(runDir, "workspace");
   // Budget tracker includes concurrent subagents — prefer it on abort. On a
   // resume, stats.costUsd already carries prior spend and outweighs the segment
   // tracker, so cumulative cost survives.
   stats.costUsd = Math.max(stats.costUsd, p.budget.usedUsd);
-  const wallClockS = p.priorWallS + Math.round((Date.now() - p.startedMs) / 1000);
+  const wallClockS = p.priorWallS + Math.round((finished - p.startedMs) / 1000);
 
   // Score even on agent crash so the run still gets an honest (low) score.
   let gates: RunResultJson["gates"] = null;
@@ -850,6 +860,7 @@ async function finalizeRun(p: FinalizeParams): Promise<{ runDir: string; result:
     schema: 1,
     run_id: p.runId,
     created_at: p.createdAt,
+    generation_finished_at: finishedAt,
     task: p.task,
     model: resultModelMetadata(model, stats.servedModels),
     budgets: p.budgets,
@@ -1063,6 +1074,7 @@ export async function resumeBench(
       `  fresh budget: $${budget.limits.maxUsd}, ${Math.round(budget.limits.maxWallMs / 60_000)} min, ${budget.limits.maxTurns} turns`,
     );
     transcript.log("resume", "runner", 0, {
+      createdAt: prior.createdAt,
       priorCostUsd: prior.stats.costUsd,
       priorTurns: prior.stats.turns,
       priorWallS: prior.wallClockS,
@@ -1141,9 +1153,8 @@ export async function resumeBench(
         runtimeState = agent.snapshotRuntimeState();
       }
     }
-    transcript.close();
-
     return await finalizeRun({
+      transcript,
       runDir,
       runId: prior.runId,
       createdAt: prior.createdAt,

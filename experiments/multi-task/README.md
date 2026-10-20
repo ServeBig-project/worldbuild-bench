@@ -113,7 +113,14 @@ the two arrays with duplicate ids.
 Future directories can be listed before either round starts. The dashboard keeps
 an existing rendered game visible while a changed candidate fails or loads. It
 shows a preparing message before the first usable rendering, never a fabricated
-progress game. Reported output tokens and estimated live throughput remain separate.
+progress game. Input and output throughput are whole-round usage totals divided
+by the same actual wall interval across both tasks; per-task rates are additive
+contributions to that round. Running values use completed responses and remain
+provisional. Input includes cache hits, displayed separately as a reported subtotal;
+omitted cache reports do not prove zero hits. Enable BigRabbit
+`--enable-cache-report` when configuring the future endpoint for useful hit counts.
+These are not engine-only prefill/decode rates. See the dashboard contract for
+exact timestamps, historical timing limits and failed-run qualification.
 
 Use actual run results to compare both task times, the time until both finish,
 output usage, and playability/coherence scores. Generation timing excludes final

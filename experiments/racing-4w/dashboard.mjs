@@ -44,9 +44,9 @@ http.createServer((req, res) => {
     const engine = url.searchParams.get("engine") ?? engines[0];
     if (!engines.includes(engine)) { res.writeHead(404); return res.end("unknown engine"); }
     const now = Date.now(), runs = selectedRuns(engine).map((run) => summarizeRun(run, now));
-    const aggregate = aggregateRuns(runs), series = history.get(engine) ?? [];
+    const aggregate = aggregateRuns(runs, now), series = history.get(engine) ?? [];
     if (!series.length || now - series.at(-1).t >= 5000) {
-      series.push({ t: now, running: aggregate.running, queue: aggregate.queue, estimatedTps: aggregate.estimatedTps });
+      series.push({ t: now, running: aggregate.running, queue: aggregate.queue });
       if (series.length > 4000) series.shift();
       history.set(engine, series);
     }

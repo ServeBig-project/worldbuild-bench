@@ -41,10 +41,10 @@ regardless of task. `/game/index.html` remains available in single-run mode.
 - Agents include `agent`, `depth`, `turns`, `inp`, `out`, `status`, `done`, `tool`,
   and in-flight `live` data when available. Feed entries have `ts`, `agent`,
   `kind`, `text`. Recent source entries have `file`, `mtime`.
-- `live` has `running`, `queue`, `estimatedTps`. `aggregate` adds their totals,
-  `activeRequests` (running + queue), exact `inputTokens`, `outputTokens`,
-  `elapsedMs`, `completed`. Chart samples have `t`, `running`, `queue`,
-  `estimatedTps`, retained while that engine is polled (at most one per 5 seconds).
+- `live` has `running`, `queue`. `aggregate` adds their totals, `activeRequests`
+  (running + queue), `inputTokens`, `outputTokens`, `elapsedMs`, `completed`.
+  Chart samples have `t`, `running`, `queue`, retained while that engine is
+  polled (at most one per 5 seconds).
 - A completed result uses `created_at` as `t0`, with `finishedAt = t0 +
   wall_clock_s * 1000`. Final per-task elapsed is frozen to `wall_clock_s`.
   Aggregate elapsed spans earliest start to latest end once every task is terminal;
@@ -60,9 +60,56 @@ regardless of task. `/game/index.html` remains available in single-run mode.
   runtime excludes pause downtime, so it is not calendar completion span for
   paused runs. Uninterrupted comparisons use the ordinary elapsed span.
   Completion does not imply the game scored well; inspect its result.
-- Token totals use response usage, superseded by final result usage. Streaming
-  `estimatedTps` uses characters / 4 / elapsed generation seconds; it is never
-  added to exact totals. Terminal runs ignore leftover live requests.
+- Token totals use response usage, superseded by cumulative `generation_end`
+  usage and then final result usage. Generation-ended runs ignore leftover live
+  requests, including while browser scoring is still running.
+
+## Whole-round throughput
+
+Both input and output rates use **one shared wall interval for the selected
+engine**: earliest generation start to latest generation end, or the current time
+for tasks still generating. Queueing, tools and pauses between resume segments are
+included; browser scoring is excluded. Waiting tasks contribute no time or tokens
+until they start. If a task has finished and the other is still waiting, the known
+interval freezes until work resumes, while the rate remains provisional.
+
+Aggregate rates are total reported input/output tokens divided by this interval in
+seconds. Each task uses the same denominator, so its displayed contribution adds
+to the engine total. Input includes cache hits; it is not an engine-only prefill
+rate. In-flight text does not count until response usage arrives.
+
+Public fields on each run and aggregate:
+
+- `cachedInputTokens`: reported cache-hit subtotal (number). Missing reports
+  contribute zero; zero does **not** establish that physical cache hits were zero.
+  Enable BigRabbit `--enable-cache-report` in the future deployment to obtain useful
+  reported hit counts. The dashboard does not change server configuration.
+- `inputTps`, `outputTps`: rates, or null when no usable interval is known.
+- `throughputElapsedMs`: shared interval, or null when unavailable. This differs
+  from the existing rounded/cumulative `elapsedMs` which excludes resume downtime.
+- `throughputProvisional`: true while any task is waiting/generating or failed, or
+  transcript errors/budget exhaustion indicate that usage may be incomplete.
+  Failed runs can freeze the known interval while retaining this qualification.
+- `throughputTimeSource`: `recorded`, `legacy-rounded` or `unavailable`.
+- `throughputUnavailableReason`: explanatory string when unavailable or when the
+  interval is zero; otherwise null.
+- Runs additionally expose `generationStartedAt`, `generationFinishedAt`: nullable
+  Unix milliseconds describing their own endpoints. Rates still share the round
+  interval. Once all tasks finish generation, successful round rates freeze before
+  scoring completes.
+
+New runs emit `start` with `createdAt` and `resume` also includes original
+`createdAt`. A runner `generation_end` event records its exact ISO `ts`, original
+`createdAt`, `resumeCount`, cumulative `inputTokens`, `outputTokens`,
+`cachedInputTokens`, and `usagePartial` before scoring. The final result persists
+`generation_finished_at` alongside `created_at`. Resume clears the previous
+generation end; later cumulative usage and end timestamps supersede that segment.
+
+An unresumed historical result lacking an exact end may use `created_at +
+wall_clock_s`, explicitly labeled `legacy-rounded`. Resumed history lacking a
+recorded actual end cannot reconstruct calendar duration from cumulative seconds:
+its rates are null with a reason. Current runner error timestamps can establish a
+known failed endpoint. Copying archives or re-gating cannot change these intervals.
 
 ## Preview behavior
 
