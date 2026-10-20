@@ -8,7 +8,7 @@ this is not two separately limited containers.
 ## Frozen software and model inputs
 
 - Benchmark: `54d2a4f`, including two parallel builder phases and shared-wall rates.
-- BR: `ServeBig-project/Big-Rabbit@8efade5d`, based on `36908c15` with fixes in
+- BR: `ServeBig-project/Big-Rabbit@e72d8b32`, based on `36908c15` with fixes in
   [PR #49](https://github.com/ServeBig-project/Big-Rabbit/pull/49) and
   [PR #50](https://github.com/ServeBig-project/Big-Rabbit/pull/50), installed under
   `/opt/worldbuild/venvs/br` with CUDA 13.0 and Torch 2.11.0+cu130.
@@ -57,6 +57,15 @@ The user requested documented performance settings, not a tuning sweep:
 Strata choices follow its [batching](https://github.com/Niko1221/Strata/blob/v0.2.1/docs/BATCHING.md)
 and [configuration](https://github.com/Niko1221/Strata/blob/v0.2.1/docs/DETAILS.md)
 documentation. No measured optimum is claimed.
+
+Deployment acceptance passed: independent routing/workspace/graph checks, streamed
+text and tool calls, and two concurrent requests with 16407 input tokens each.
+Automatic BR preparation skipped the 384/1024-row prefill measurements for
+temporary-memory capacity; those sizes retain existing defaults. The long-request
+acceptance exercised serving after that decision. On this 5090, calls above 128
+rows use the generic Triton expert implementation; decode batches 1–8 use measured
+custom CUDA kernels with graph replay. This coverage gap is tracked in
+[BR issue #55](https://github.com/ServeBig-project/Big-Rabbit/issues/55).
 
 ## Operate
 
