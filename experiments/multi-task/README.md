@@ -68,7 +68,10 @@ real engine runs must establish compliance and game quality.
 The runner invokes PATH-resolved `npx --no-install tsx src/cli.ts run --task TASK
 --model ID --run-dir DIR --effort TIER --budget-mins N`. The generic `wb run
 --run-dir DIR` option creates that exact directory and rejects existing directories;
-without it the normal timestamped runs directory behavior is unchanged.
+without it the normal timestamped runs directory behavior is unchanged. `run_id`
+remains the directory basename. If exporting reports from both engine roots,
+package their task folders under separate report roots: screenshot paths use
+`run_id/screenshots/...` and task basenames repeat across the two engines.
 
 The runner sets `WB_PROMPTS_DIR`, `WB_MAX_SPAWN_DEPTH=1` and a provider timeout equal
 to the round's wall backstop, reusing the local-engine fetch timeout preload. It

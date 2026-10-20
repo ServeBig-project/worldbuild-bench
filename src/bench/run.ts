@@ -690,8 +690,8 @@ export async function runBench(opts: RunOptions): Promise<{ runDir: string; resu
   const brief = readTaskBrief(opts.task);
 
   const runsRoot = opts.runsDir ?? path.join(packageRoot(), "runs");
-  const runId = runIdFor(opts.task, model.id);
-  const runDir = opts.runDir ? path.resolve(opts.runDir) : path.join(runsRoot, runId);
+  const runDir = opts.runDir ? path.resolve(opts.runDir) : path.join(runsRoot, runIdFor(opts.task, model.id));
+  const runId = path.basename(runDir);
   const workspace = path.join(runDir, "workspace");
   fs.mkdirSync(path.dirname(runDir), { recursive: true });
   try {
@@ -1065,6 +1065,7 @@ export async function resumeBench(
     transcript.log("resume", "runner", 0, {
       priorCostUsd: prior.stats.costUsd,
       priorTurns: prior.stats.turns,
+      priorWallS: prior.wallClockS,
       addedBudgetUsd: budget.limits.maxUsd,
       resumeCount,
       recoveredFromCheckpoint: checkpointIsNewer,

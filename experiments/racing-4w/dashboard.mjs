@@ -44,7 +44,7 @@ http.createServer((req, res) => {
     const engine = url.searchParams.get("engine") ?? engines[0];
     if (!engines.includes(engine)) { res.writeHead(404); return res.end("unknown engine"); }
     const now = Date.now(), runs = selectedRuns(engine).map((run) => summarizeRun(run, now));
-    const aggregate = aggregateRuns(runs, now), series = history.get(engine) ?? [];
+    const aggregate = aggregateRuns(runs), series = history.get(engine) ?? [];
     if (!series.length || now - series.at(-1).t >= 5000) {
       series.push({ t: now, running: aggregate.running, queue: aggregate.queue, estimatedTps: aggregate.estimatedTps });
       if (series.length > 4000) series.shift();
@@ -68,7 +68,13 @@ http.createServer((req, res) => {
       const ext = path.extname(file);
       res.writeHead(200, { "content-type": TYPES[ext] ?? "application/octet-stream", "cache-control": "no-store" });
       // Install observation before any game script, including module import failures.
-      res.end(ext === ".html" ? data.toString().replace(/<head(?:\s[^>]*)?>/i, (head) => head + PROBE) : data);
+      let content = data;
+      if (ext === ".html") {
+        const html = data.toString();
+        content = /<head(?:\s[^>]*)?>/i.test(html) ? html.replace(/<head(?:\s[^>]*)?>/i, (head) => head + PROBE)
+          : html.replace(/^(\s*<!doctype[^>]*>)?/i, (doctype) => doctype + PROBE);
+      }
+      res.end(content);
     });
     return;
   }

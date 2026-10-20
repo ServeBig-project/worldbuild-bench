@@ -46,12 +46,18 @@ regardless of task. `/game/index.html` remains available in single-run mode.
 - A completed result uses `created_at` as `t0`, with `finishedAt = t0 +
   wall_clock_s * 1000`. Final per-task elapsed is frozen to `wall_clock_s`.
   Aggregate elapsed spans earliest start to latest end once every task is terminal;
-  while a task is still waiting/running, aggregate elapsed continues. This measures
+  active tasks contribute their current runtime; waiting tasks contribute nothing. This measures
   the harness's generation duration; final browser scoring is excluded by the
   harness. A root final response alone is the scoring phase, not completion.
 - `result.json` agent errors, budget exhaustion or gate errors mark failure.
   A runner error without result uses its event time as terminal time; resume clears
-  the error. Completion does not imply the game scored well; inspect its result.
+  the error. A resume event with newer `resumeCount` than `result.resumed.count`
+  invalidates that old result until the resumed segment finishes. Active resumed
+  elapsed is `resume.priorWallS` (or prior result wall time) plus the current
+  segment. Aggregate elapsed is max(start + runtime) minus earliest start: resumed
+  runtime excludes pause downtime, so it is not calendar completion span for
+  paused runs. Uninterrupted comparisons use the ordinary elapsed span.
+  Completion does not imply the game scored well; inspect its result.
 - Token totals use response usage, superseded by final result usage. Streaming
   `estimatedTps` uses characters / 4 / elapsed generation seconds; it is never
   added to exact totals. Terminal runs ignore leftover live requests.

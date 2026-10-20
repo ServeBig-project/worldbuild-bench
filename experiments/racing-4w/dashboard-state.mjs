@@ -50,12 +50,12 @@ function gameVersion(dir) {
 
 export function summarizeRun(run, now) {
   const agents = new Map(), feed = [];
-  let t0 = null, failedAt = null, inputTokens = 0, outputTokens = 0;
+  let t0 = null, failedAt = null, resume = null, inputTokens = 0, outputTokens = 0;
   for (const event of readTranscript(run.dir)) {
     const ts = Date.parse(event.ts);
     if (event.type === "request" && t0 === null) t0 = ts;
     if (event.agent === "runner") {
-      if (event.type === "resume") failedAt = null;
+      if (event.type === "resume") { failedAt = null; resume = { ...event, ts }; }
       if (event.type === "error") failedAt = ts;
     } else {
       const a = agents.get(event.agent) ?? { agent: event.agent, depth: event.depth, turns: 0, out: 0, inp: 0, status: "idle", tool: "", done: false };
@@ -82,13 +82,18 @@ export function summarizeRun(run, now) {
       feed.push({ ts, agent: event.agent, kind: event.type, text: String(event.message ?? event.reason ?? `${event.tool} ${event.summary ?? ""}`).slice(0, 240) });
     }
   }
-  const resultFile = path.join(run.dir, "result.json"), result = readJson(resultFile, null);
+  const savedResult = readJson(path.join(run.dir, "result.json"), null);
+  const resumed = resume && resume.resumeCount > (savedResult?.resumed?.count ?? 0);
+  const result = resumed ? null : savedResult;
+  if (resumed && savedResult) t0 = Date.parse(savedResult.created_at);
   if (result) {
     t0 = Date.parse(result.created_at);
     inputTokens = result.agent?.tokens_in ?? inputTokens;
     outputTokens = result.agent?.tokens_out ?? outputTokens;
   }
-  const finishedAt = result ? t0 + result.wall_clock_s * 1000 : failedAt;
+  const elapsedMs = resumed ? (resume.priorWallS ?? savedResult?.wall_clock_s ?? 0) * 1000 + Math.max(0, (failedAt ?? now) - resume.ts)
+    : result ? result.wall_clock_s * 1000 : t0 === null ? 0 : Math.max(0, (failedAt ?? now) - t0);
+  const finishedAt = result || failedAt !== null ? t0 + elapsedMs : null;
   const failed = Boolean(result?.agent?.error || result?.agent?.budget_exhausted || result?.gate_error || failedAt);
   const status = finishedAt !== null ? (failed ? "failed" : "finished") : t0 !== null ? "running" : "waiting";
   const root = [...agents.values()].find((a) => a.depth === 0) ?? null;
@@ -103,13 +108,13 @@ export function summarizeRun(run, now) {
   }
   const phase = status === "waiting" ? "waiting for run" : finishedAt !== null ? status : root?.done ? "scoring" : builders.length ? (builders.every((a) => a.done) ? "integration / repair" : "parallel refinement") : "building playable first version";
   return {
-    ...run, status, phase, t0, finishedAt, elapsedMs: t0 === null ? 0 : Math.max(0, (finishedAt ?? now) - t0),
+    ...run, status, phase, t0, finishedAt, elapsedMs,
     inputTokens, outputTokens, root, builders, feed: feed.slice(-40).reverse(),
     live: { running, queue, estimatedTps }, game: { ...gameVersion(run.dir), url: `/game/${encodeURIComponent(run.id)}/index.html` },
   };
 }
 
-export function aggregateRuns(runs, now) {
+export function aggregateRuns(runs) {
   const started = runs.map((r) => r.t0).filter((t) => t !== null);
   const completed = runs.length > 0 && runs.every((r) => r.finishedAt !== null);
   const running = runs.reduce((n, r) => n + r.live.running, 0), queue = runs.reduce((n, r) => n + r.live.queue, 0);
@@ -117,6 +122,6 @@ export function aggregateRuns(runs, now) {
     activeRequests: running + queue, running, queue,
     inputTokens: runs.reduce((n, r) => n + r.inputTokens, 0), outputTokens: runs.reduce((n, r) => n + r.outputTokens, 0),
     estimatedTps: runs.reduce((n, r) => n + r.live.estimatedTps, 0), completed,
-    elapsedMs: started.length ? Math.max(0, (completed ? Math.max(...runs.map((r) => r.finishedAt)) : now) - Math.min(...started)) : 0,
+    elapsedMs: started.length ? Math.max(0, Math.max(...runs.filter((r) => r.t0 !== null).map((r) => r.t0 + r.elapsedMs)) - Math.min(...started)) : 0,
   };
 }
