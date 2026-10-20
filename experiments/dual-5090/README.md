@@ -70,14 +70,14 @@ The Paper2 run was stopped at the user's request; its results and deployment
 snapshot remain under `runs/paper2/`. Its NoWAG optimization-coverage issue
 [BR #55](https://github.com/ServeBig-project/Big-Rabbit/issues/55) concerns that
 archived configuration. Native NVFP4 passed normal streaming, tool calls and two
-concurrent requests with 16407 input tokens each; both tasks have started. Strata
+concurrent requests with 16407 input tokens each in the previous hybrid run. Strata
 finished both tasks successfully and its inference service was stopped at the user's request.
 
 The first native run is preserved under `runs/fp4/`. After the user authorized a
 restart, standard initialization with `ft bench bw --gpu 0 --dtype nvfp4 --cpu-threads 30`
 measured concurrent CPU expert bandwidth of 62.3 GB/s and PCIe bandwidth of
-21.6 GB/s on BR's assigned cores. The restarted service reports a hybrid GPU
-fetch fraction of `0.2578953641`; the fresh round writes to `runs/fp4-initialized/`.
+21.6 GB/s on BR's assigned cores. That hybrid service reported a GPU fetch fraction of `0.2578953641`;
+its preserved results are under `runs/fp4-initialized/`.
 This is one standard initialization, not a parameter sweep or a measured model
 speedup. [BR PR #43](https://github.com/ServeBig-project/Big-Rabbit/pull/43) automatically
 measures only with `--moe-backend auto`; explicit hybrid intentionally does not
@@ -89,6 +89,15 @@ The user subsequently requested a FlashInfer trial. The current launcher selects
 `--moe-backend offload --nvfp4-backend flashinfer`, keeping the GPU, CPU affinity,
 KV precision and cache budgets. The initialized hybrid run is stopped and retained
 under `runs/fp4-initialized/`; the FlashInfer round uses `runs/fp4-flashinfer/`.
+
+The FlashInfer trial failed during startup before API acceptance or benchmark launch.
+After exposing the installed CUDA wheel headers, FP4 module compilation and weight
+repacking succeeded and the log selected `b12x`. Warmup then raised
+`force_tile_config fc2 tile (tile_k=32, tile_n=512) does not fit problem N/K=2560/640 at moe_block_size=8`.
+This matches the existing [upstream report #335](https://github.com/FlashML-org/FreeToken/issues/335).
+BR has exited, its benchmark remains stopped, and no FlashInfer throughput is available.
+Logs and configuration are preserved in `runs/fp4-flashinfer/deployment/`.
+No engine or third-party kernel patch was applied.
 
 ## Operate
 
