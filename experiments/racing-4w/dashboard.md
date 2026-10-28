@@ -26,6 +26,18 @@ regardless of task. `/game/index.html` remains available in single-run mode.
 
 ## Public HTTP interface
 
+The optional manifest `realtime` map selects an engine's existing statistics API:
+`"BR NVFP4": {"format":"br", "url":"http://127.0.0.1:1920/v1/stats"}`
+or `"Strata IQ2_XS": {"format":"strata", "url":"http://127.0.0.1:18080/metrics"}`.
+State adds `realtime: {outputTps, windowSeconds}`. This is the engine-wide live
+output rate including in-progress replies, separate from completed-response
+whole-round averages. BR reports a five-second window; Strata's hardware sampler
+reports its two-second total across requests. These are engine-native windows,
+not identical measurement windows. Unconfigured/unreachable sources, non-OK
+responses or missing rates return `realtime: null`; the UI shows unavailable,
+never an invented zero or a stale prior rate. The read-only request times out
+after 1.5 seconds and does not send generation requests or restart engines.
+
 - `GET /api/state?engine=LABEL` selects an engine; omitted selects the first.
   Unknown engines return HTTP 404.
 - `GET /game/ID/index.html` and relative resources serve only that run's workspace.
@@ -125,3 +137,35 @@ Agents still use `test_game` and `play_game` to verify movement, objectives and
 restart. Keeping a running old iframe preserves its already-loaded game; a game
 that lazily fetches changing resources may still encounter an error. This is a
 local demo observer, not a snapshot/versioning system.
+
+## Median live decode throughput
+
+The MEDIAN card is the median of each engine's observed live total output rate,
+not a median across requests or an isolated kernel timing. The server samples
+all engines every5seconds, independent of tabs, browser presence or API polling.
+Only finite positive rates during an active generation round count; zero-rate
+windows, missing telemetry and failures are excluded. Source windows remain
+BR5seconds and Strata2seconds. Concurrent prefill can still affect these rates.
+
+`/api/state.decodeMedian` provides `outputTps` (null before any samples), `samples`,
+`firstSampleAt`, `lastSampleAt` (epoch milliseconds or null),
+`samplingIntervalSeconds:5` and `sourceWindowSeconds:5|2|null`. Even sample counts
+use the mean of the two middle values. The UI shows sample count and start time.
+Existing history is not reconstructed: collection begins when this version starts.
+
+Samples persist in `<absolute manifest path>.decode-median.json`; without a
+manifest, the file is `runs/dashboard.decode-median.json` under the repository.
+Restarting the dashboard preserves the same round's samples. A fresh round with
+new task start times resets that engine's history; restart the dashboard when
+replacing run directories, as for the existing transcript reader. Sampling stops
+when all of an engine's generation tasks end, retaining its observed median.
+
+## Frozen rounds
+
+A manifest may map engine labels to immutable API snapshots through `frozen`.
+Snapshot paths resolve beside the manifest. Frozen responses retain recorded
+counts, timings and `decodeMedian`, expose `frozenAt` in epoch milliseconds, and
+set `realtime` to null. The current engine selector remains available. Frozen
+engines are never sampled; their run entries point at archived workspace folders
+for previews. Missing snapshots return503 rather than invented results.
+The UI labels a user-stopped round as frozen partial results, not a final score.
