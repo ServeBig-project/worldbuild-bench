@@ -159,3 +159,13 @@ Restarting the dashboard preserves the same round's samples. A fresh round with
 new task start times resets that engine's history; restart the dashboard when
 replacing run directories, as for the existing transcript reader. Sampling stops
 when all of an engine's generation tasks end, retaining its observed median.
+
+## Frozen rounds
+
+A manifest may map engine labels to immutable API snapshots through `frozen`.
+Snapshot paths resolve beside the manifest. Frozen responses retain recorded
+counts, timings and `decodeMedian`, expose `frozenAt` in epoch milliseconds, and
+set `realtime` to null. The current engine selector remains available. Frozen
+engines are never sampled; their run entries point at archived workspace folders
+for previews. Missing snapshots return503 rather than invented results.
+The UI labels a user-stopped round as frozen partial results, not a final score.

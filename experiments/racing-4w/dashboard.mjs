@@ -46,6 +46,7 @@ async function sampleDecodeRates() {
   sampling = true;
   try {
     await Promise.all(engines.map(async engine => {
+      if (manifest?.frozen?.[engine]) return;
       const now = Date.now(), runs = selectedRuns(engine).map(run => summarizeRun(run, now));
       const active = runs.some(run => run.t0 !== null && run.generationFinishedAt === null);
       const reading = active ? await liveThroughput(manifest?.realtime?.[engine]) : null;
@@ -72,6 +73,12 @@ http.createServer(async (req, res) => {
   if (url.pathname === "/api/state") {
     const engine = url.searchParams.get("engine") ?? engines[0];
     if (!engines.includes(engine)) { res.writeHead(404); return res.end("unknown engine"); }
+    if (manifest?.frozen?.[engine]) {
+      const file = path.resolve(path.dirname(path.resolve(manifestFile)), manifest.frozen[engine]);
+      const frozen = readJson(file, null);
+      if (!frozen) { res.writeHead(503); return res.end("frozen snapshot unavailable"); }
+      return sendPanel(req, res, "application/json", JSON.stringify({ ...frozen, engines, engine, realtime: null }));
+    }
     const now = Date.now(), runs = selectedRuns(engine).map((run) => summarizeRun(run, now));
     const aggregate = aggregateRuns(runs, now), series = history.get(engine) ?? [];
     const realtime = await liveThroughput(manifest?.realtime?.[engine]);
